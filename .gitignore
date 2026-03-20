@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+DerivedData/
+
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+
+scripts/beta_export_options.plist
+*.p12
+*.cer
+*.mobileprovision
