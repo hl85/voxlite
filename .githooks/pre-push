@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# .githooks/pre-push
+# 推送到受保护分支前自动执行 VoxLite 自检
+# 安装：git config core.hooksPath .githooks
+
+set -euo pipefail
+
+PROTECTED_BRANCHES=("main" "develop")
+
+while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+    BRANCH=$(echo "$REMOTE_REF" | sed 's|refs/heads/||')
+
+    IS_PROTECTED=false
+    for PROTECTED in "${PROTECTED_BRANCHES[@]}"; do
+        if [[ "$BRANCH" == "$PROTECTED" ]]; then
+            IS_PROTECTED=true
+            break
+        fi
+    done
+
+    if [[ "$IS_PROTECTED" == "true" ]]; then
+        echo ""
+        echo "🔍 推送到受保护分支 [$BRANCH]，执行自检..."
+        echo ""
+
+        echo "📦 [1/2] swift build..."
+        if ! swift build --disable-sandbox 2>&1; then
+            echo ""
+            echo "❌ 构建失败，推送已拦截。"
+            exit 1
+        fi
+
+        echo ""
+        echo "🧪 [2/2] VoxLiteSelfCheck..."
+        RESULT=$(swift run --disable-sandbox VoxLiteSelfCheck 2>&1) || true
+        if echo "$RESULT" | grep -q "SELF_CHECK_OK"; then
+            echo "✅ 自检通过：SELF_CHECK_OK"
+        else
+            echo ""
+            echo "❌ 自检未通过，推送已拦截。"
+            echo ""
+            echo "$RESULT"
+            echo ""
+            echo "请修复后重新推送。"
+            exit 1
+        fi
+
+        echo ""
+        echo "✅ 所有检查通过，继续推送到 [$BRANCH]。"
+        echo ""
+    fi
+done
+
+exit 0

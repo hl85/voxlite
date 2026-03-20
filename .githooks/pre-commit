@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit
+# 拦截对 main 分支的直接 commit（本地保护，远端由 GitHub 规则兜底）
+# 安装：git config core.hooksPath .githooks
+
+set -euo pipefail
+
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+if [[ "$CURRENT_BRANCH" == "main" ]]; then
+    echo ""
+    echo "❌ 禁止直接向 main 分支提交。"
+    echo ""
+    echo "   请遵循 GitFlow 流程："
+    echo "   1. 从 develop 拉取 feature/* 或 hotfix/* 分支"
+    echo "   2. 完成开发后提交 Pull Request"
+    echo "   3. 通过 Review 和自检后合入"
+    echo ""
+    echo "   参考：docs/GITFLOW.md"
+    echo ""
+    exit 1
+fi
+
+exit 0
