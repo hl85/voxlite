@@ -222,8 +222,8 @@ public final class FileAppSettingsStore: AppSettingsStore {
         showRecentSummary: true,
         summaryMaxLength: 48,
         historyLimit: 100,
-        speechModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: ""),
-        llmModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: ""),
+        speechModel: ModelSetting(),
+        llmModel: ModelSetting(),
         onboardingCompleted: false
     )
 }

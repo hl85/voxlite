@@ -754,7 +754,7 @@ Wave FINAL (After ALL tasks — 4 parallel reviews, then user okay):
   - Files: `Sources/VoxLiteCore/RemoteSpeechTranscriber.swift`
   - Pre-commit: `swift build --disable-sandbox`
 
-- [ ] 7. Remote LLM Text Generator — RemoteLLMGenerator.swift
+- [x] 7. Remote LLM Text Generator — RemoteLLMGenerator.swift
 
   **What to do**:
   - Create `Sources/VoxLiteCore/RemoteLLMGenerator.swift`

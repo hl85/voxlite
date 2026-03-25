@@ -123,14 +123,93 @@ public enum MenuBarDisplayMode: String, Codable, Sendable {
 }
 
 public struct ModelSetting: Codable, Equatable, Sendable {
-    public var localEnabled: Bool
-    public var remoteProvider: String
-    public var remoteEndpoint: String
-
-    public init(localEnabled: Bool, remoteProvider: String, remoteEndpoint: String) {
-        self.localEnabled = localEnabled
-        self.remoteProvider = remoteProvider
-        self.remoteEndpoint = remoteEndpoint
+    public var useRemote: Bool = false
+    public var provider: RemoteProvider = .deepseek
+    public var customEndpoint: String = ""
+    public var selectedSTTModel: String = ""
+    public var selectedLLMModel: String = ""
+    
+    public var effectiveEndpoint: URL? {
+        if provider == .custom {
+            if !customEndpoint.isEmpty {
+                return URL(string: customEndpoint)
+            }
+            return nil
+        }
+        return provider.defaultEndpoint
+    }
+    
+    public init(
+        useRemote: Bool = false,
+        provider: RemoteProvider = .deepseek,
+        customEndpoint: String = "",
+        selectedSTTModel: String = "",
+        selectedLLMModel: String = ""
+    ) {
+        self.useRemote = useRemote
+        self.provider = provider
+        self.customEndpoint = customEndpoint
+        self.selectedSTTModel = selectedSTTModel
+        self.selectedLLMModel = selectedLLMModel
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Backward compatibility: convert old format to new format
+        if let localEnabled = try container.decodeIfPresent(Bool.self, forKey: .useRemote) {
+            self.useRemote = localEnabled
+        } else if let oldLocalEnabled = try container.decodeIfPresent(Bool.self, forKey: .oldLocalEnabled) {
+            self.useRemote = !oldLocalEnabled
+        } else {
+            self.useRemote = false
+        }
+        
+        if let decodedProvider = try container.decodeIfPresent(RemoteProvider.self, forKey: .provider) {
+            self.provider = decodedProvider
+        } else {
+            // Fallback to deepseek if we can't decode
+            self.provider = .deepseek
+        }
+        
+        if let decodedCustomEndpoint = try container.decodeIfPresent(String.self, forKey: .customEndpoint) {
+            self.customEndpoint = decodedCustomEndpoint
+        } else if let oldRemoteEndpoint = try container.decodeIfPresent(String.self, forKey: .oldRemoteEndpoint) {
+            self.customEndpoint = oldRemoteEndpoint
+        } else {
+            self.customEndpoint = ""
+        }
+        
+        if let decodedSTTModel = try container.decodeIfPresent(String.self, forKey: .selectedSTTModel) {
+            self.selectedSTTModel = decodedSTTModel
+        } else {
+            self.selectedSTTModel = ""
+        }
+        
+        if let decodedLLMModel = try container.decodeIfPresent(String.self, forKey: .selectedLLMModel) {
+            self.selectedLLMModel = decodedLLMModel
+        } else {
+            self.selectedLLMModel = ""
+        }
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case useRemote
+        case provider
+        case customEndpoint
+        case selectedSTTModel
+        case selectedLLMModel
+        case oldLocalEnabled = "localEnabled"
+        case oldRemoteEndpoint = "remoteEndpoint"
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(useRemote, forKey: .useRemote)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(customEndpoint, forKey: .customEndpoint)
+        try container.encode(selectedSTTModel, forKey: .selectedSTTModel)
+        try container.encode(selectedLLMModel, forKey: .selectedLLMModel)
     }
 }
 
