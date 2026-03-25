@@ -23,6 +23,13 @@ public enum VoxErrorCode: String, Error, Equatable, Sendable {
     case timeout
     case retryExhausted
     case unknown
+    case remoteAPIError
+    case invalidAPIKey
+    case rateLimited
+    case networkError
+    case invalidResponse
+    case remoteProviderUnavailable
+    case httpsRequired
 }
 
 public enum PermissionItem: String, Equatable, Sendable, CaseIterable {
