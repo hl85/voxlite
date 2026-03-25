@@ -476,39 +476,7 @@ private extension MainWindowView {
                     }
                 }
             }
-            sectionCard(title: "模型设置") {
-                VStack(spacing: 10) {
-                    statusRow("语音识别模型", model.appSettings.speechModel.localEnabled ? "本地模型（端侧）" : "未启用")
-                    statusRow("LLM 模型", model.appSettings.llmModel.localEnabled ? "本地模型（端侧）" : "未启用")
-                    Divider().overlay(palette.divider)
-                    Text("远端模型配置")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(palette.mutedText)
-                    settingRow("远端服务") {
-                        TextField("例如 openai", text: Binding(
-                            get: { model.appSettings.llmModel.remoteProvider },
-                            set: { model.appSettings.llmModel.remoteProvider = $0 }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
-                    }
-                    settingRow("远端地址") {
-                        TextField("https://api.example.com/v1", text: Binding(
-                            get: { model.appSettings.llmModel.remoteEndpoint },
-                            set: { model.appSettings.llmModel.remoteEndpoint = $0 }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 280)
-                    }
-                    HStack {
-                        Spacer()
-                        Button("保存模型配置") {
-                            model.saveRemoteModelSettings()
-                        }
-                        .buttonStyle(VoxPrimaryButtonStyle())
-                    }
-                }
-            }
+            ModelSettingsView()
         }
         .onAppear {
             model.refreshPermissionSnapshot()
