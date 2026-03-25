@@ -73,7 +73,7 @@ public struct ContextInfo: Equatable, Sendable {
     }
 }
 
-public enum AppCategory: String, Equatable, Sendable {
+public enum AppCategory: String, Codable, Hashable, Equatable, Sendable {
     case communication
     case development
     case writing
@@ -296,6 +296,7 @@ public struct HotKeyConfiguration: Codable, Equatable, Sendable {
         case kVK_RightArrow: return "→"
         case kVK_DownArrow: return "↓"
         case kVK_UpArrow: return "↑"
+        case kVK_Function: return "Fn"
         default: return nil
         }
     }

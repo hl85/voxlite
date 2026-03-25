@@ -10,12 +10,20 @@
 		7BCB82CB2F6C263A00203BF0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7BCB82CA2F6C263A00203BF0 /* Assets.xcassets */; };
 		A100000003 /* VoxLiteFeature in Frameworks */ = {isa = PBXBuildFile; productRef = F100000001 /* VoxLiteFeature */; };
 		F200000001 /* VoxLiteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000002 /* VoxLiteApp.swift */; };
+		F200000011 /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000012 /* MainWindowView.swift */; };
+		F200000021 /* RuntimeWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000022 /* RuntimeWindowView.swift */; };
+		F200000031 /* SharedComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000032 /* SharedComponents.swift */; };
+		F200000041 /* HotKeyCaptureInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000042 /* HotKeyCaptureInput.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		7BCB82CA2F6C263A00203BF0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B100000001 /* voxlite.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = voxlite.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F200000002 /* VoxLiteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoxLiteApp.swift; path = Sources/VoxLiteApp/VoxLiteApp.swift; sourceTree = "<group>"; };
+		F200000012 /* MainWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MainWindowView.swift; path = Sources/VoxLiteApp/MainWindowView.swift; sourceTree = "<group>"; };
+		F200000022 /* RuntimeWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeWindowView.swift; path = Sources/VoxLiteApp/RuntimeWindowView.swift; sourceTree = "<group>"; };
+		F200000032 /* SharedComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedComponents.swift; path = Sources/VoxLiteApp/SharedComponents.swift; sourceTree = "<group>"; };
+		F200000042 /* HotKeyCaptureInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HotKeyCaptureInput.swift; path = Sources/VoxLiteApp/HotKeyCaptureInput.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -35,6 +43,10 @@
 			children = (
 				7BCB82CA2F6C263A00203BF0 /* Assets.xcassets */,
 				F200000002 /* VoxLiteApp.swift */,
+				F200000012 /* MainWindowView.swift */,
+				F200000022 /* RuntimeWindowView.swift */,
+				F200000032 /* SharedComponents.swift */,
+				F200000042 /* HotKeyCaptureInput.swift */,
 				D100000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -128,6 +140,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				F200000001 /* VoxLiteApp.swift in Sources */,
+				F200000011 /* MainWindowView.swift in Sources */,
+				F200000021 /* RuntimeWindowView.swift in Sources */,
+				F200000031 /* SharedComponents.swift in Sources */,
+				F200000041 /* HotKeyCaptureInput.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

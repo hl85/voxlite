@@ -115,7 +115,7 @@ public final class VoicePipeline {
                 throw VoxErrorCode.timeout
             }
 
-            var clean = cleaner.cleanText(transcript: transcript.text, context: context)
+            var clean = await cleaner.cleanText(transcript: transcript.text, context: context)
             logger.info("pipeline stage clean done success=\(clean.success) latency=\(clean.latencyMs)ms usedFallback=\(clean.usedFallback)")
             if clean.latencyMs > retryPolicy.timeoutMs || !clean.success {
                 clean = CleanResult(

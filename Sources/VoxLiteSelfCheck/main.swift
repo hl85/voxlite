@@ -27,29 +27,31 @@ func runStateMachineChecks() throws {
     try require(sm.transition(to: .injecting) == false, "idle -> injecting should be rejected")
 }
 
-func runCleanerChecks() throws {
-    let cleaner = RuleBasedTextCleaner()
+@MainActor
+func runCleanerChecks() async throws {
+    let cleaner = RuleBasedTextCleaner(generator: StubPromptGenerator())
     let chatContext = ContextInfo(bundleId: "com.slack", appCategory: .communication, inputRole: "textField", locale: "zh_CN")
     let devContext = ContextInfo(bundleId: "com.apple.dt.Xcode", appCategory: .development, inputRole: "textField", locale: "zh_CN")
-    let chat = cleaner.cleanText(transcript: "今晚完成接口对齐", context: chatContext)
-    let dev = cleaner.cleanText(transcript: "add fallback path", context: devContext)
-    let writing = cleaner.cleanText(
+    let chat = await cleaner.cleanText(transcript: "今晚完成接口对齐", context: chatContext)
+    let dev = await cleaner.cleanText(transcript: "add fallback path", context: devContext)
+    let writing = await cleaner.cleanText(
         transcript: "这段内容希望更正式一些",
         context: ContextInfo(bundleId: "com.apple.Pages", appCategory: .writing, inputRole: "textField", locale: "zh_CN")
     )
-    let general = cleaner.cleanText(
+    let general = await cleaner.cleanText(
         transcript: "   会议纪要先这样   ",
         context: ContextInfo(bundleId: "com.apple.TextEdit", appCategory: .general, inputRole: "textField", locale: "zh_CN")
     )
     try require(chat.success, "chat clean should succeed")
-    try require(chat.cleanText.hasSuffix("。"), "chat clean should end with punctuation")
+    try require(chat.cleanText.contains("今晚完成接口对齐"), "chat clean should keep original meaning")
+    try require(chat.cleanText.contains("原始文本：") == false, "chat clean should not output prompt text")
     try require(dev.success, "dev clean should succeed")
-    try require(dev.cleanText.contains("feat(voice):"), "dev clean should include style prefix")
+    try require(dev.cleanText.contains("add fallback path"), "dev clean should keep command content")
     try require(writing.success, "writing clean should succeed")
-    try require(writing.cleanText.hasPrefix("我们建议："), "writing clean should be formalized")
+    try require(writing.cleanText.contains("更正式一些"), "writing clean should keep source content")
     try require(general.success, "general clean should succeed")
-    try require(general.cleanText == "会议纪要先这样。", "general clean should trim and punctuate")
-    let empty = cleaner.cleanText(
+    try require(general.cleanText.contains("会议纪要先这样"), "general clean should trim and preserve source")
+    let empty = await cleaner.cleanText(
         transcript: "  ",
         context: ContextInfo(bundleId: "com.apple.TextEdit", appCategory: .general, inputRole: "textField", locale: "zh_CN")
     )
@@ -94,7 +96,7 @@ struct StubContextResolver: ContextResolving {
 }
 
 struct StubCleanerFail: TextCleaning {
-    func cleanText(transcript: String, context: ContextInfo) -> CleanResult {
+    func cleanText(transcript: String, context: ContextInfo) async -> CleanResult {
         CleanResult(
             cleanText: "",
             confidence: 0,
@@ -108,7 +110,7 @@ struct StubCleanerFail: TextCleaning {
 }
 
 struct StubCleanerSuccess: TextCleaning {
-    func cleanText(transcript: String, context: ContextInfo) -> CleanResult {
+    func cleanText(transcript: String, context: ContextInfo) async -> CleanResult {
         CleanResult(
             cleanText: transcript,
             confidence: 0.9,
@@ -144,6 +146,50 @@ final class StubInjectorFailThenSuccess: TextInjecting {
     }
 }
 
+struct StubPromptGenerator: PromptGenerating {
+    func generateText(from prompt: String) async throws -> String {
+        let markers = ["原始文本：", "用户指令：", "原始内容："]
+        for marker in markers {
+            if let range = prompt.range(of: marker, options: .backwards) {
+                let source = prompt[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+                return "加工结果：\(source)"
+            }
+        }
+        return "加工结果：\(prompt)"
+    }
+
+    func availabilityState() -> FoundationModelAvailabilityState {
+        .available
+    }
+}
+
+final class CapturingPromptGenerator: PromptGenerating {
+    private(set) var prompts: [String] = []
+    private let output: String
+
+    init(output: String) {
+        self.output = output
+    }
+
+    func generateText(from prompt: String) async throws -> String {
+        prompts.append(prompt)
+        return output
+    }
+
+    func availabilityState() -> FoundationModelAvailabilityState {
+        .available
+    }
+}
+
+final class CapturingInjector: TextInjecting {
+    private(set) var lastText: String = ""
+
+    func injectText(_ text: String) -> InjectResult {
+        lastText = text
+        return InjectResult(success: true, usedClipboardFallback: false, errorCode: nil, latencyMs: 5)
+    }
+}
+
 @MainActor
 final class StubPermissions: PermissionManaging {
     func hasRequiredPermissions() -> Bool { true }
@@ -172,6 +218,35 @@ final class SpyLogger: LoggerServing {
 final class StubMetrics: MetricsServing {
     func record(event: String, success: Bool, errorCode: VoxErrorCode?, latencyMs: Int) {}
     func percentile(_ event: String, _ value: Double) -> Int? { nil }
+}
+
+final class InMemoryHistoryStore: HistoryStore {
+    var items: [TranscriptHistoryItem] = []
+    func loadHistory() -> [TranscriptHistoryItem] { items }
+    func saveHistory(_ items: [TranscriptHistoryItem]) { self.items = items }
+}
+
+final class InMemorySkillStore: SkillStore {
+    var snapshot: SkillConfigSnapshot
+    init(snapshot: SkillConfigSnapshot = FileSkillStore.defaultSnapshot) {
+        self.snapshot = snapshot
+    }
+    func loadSkills() -> SkillConfigSnapshot { snapshot }
+    func saveSkills(_ snapshot: SkillConfigSnapshot) { self.snapshot = snapshot }
+}
+
+final class InMemorySettingsStore: AppSettingsStore {
+    var settings: AppSettings
+    init(settings: AppSettings = FileAppSettingsStore.defaultSettings) {
+        self.settings = settings
+    }
+    func loadSettings() -> AppSettings { settings }
+    func saveSettings(_ settings: AppSettings) { self.settings = settings }
+}
+
+final class StubLaunchAtLoginManager: LaunchAtLoginManaging {
+    private(set) var latest: Bool = false
+    func setEnabled(_ enabled: Bool) { latest = enabled }
 }
 
 @MainActor
@@ -243,6 +318,34 @@ func runPipelineFallbackChecks() async throws {
     let result = try await pipeline.stopRecordingAndProcess(sessionId: sessionId)
     try require(result.clean.usedFallback, "clean result should fallback to transcript")
     try require(result.clean.cleanText == "原始转写文本", "fallback should preserve transcript")
+}
+
+@MainActor
+func runPromptToLLMInjectionChecks() async throws {
+    let generator = CapturingPromptGenerator(output: "LLM加工后的结果。")
+    let cleaner = RuleBasedTextCleaner(
+        skillStore: InMemorySkillStore(),
+        matcher: SkillMatcher(),
+        generator: generator
+    )
+    let injector = CapturingInjector()
+    let pipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: StubTranscriber(),
+        contextResolver: StubContextResolver(),
+        cleaner: cleaner,
+        injector: injector,
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics()
+    )
+    let sessionId = try pipeline.startRecording()
+    let result = try await pipeline.stopRecordingAndProcess(sessionId: sessionId)
+    try require(generator.prompts.count == 1, "pipeline should call llm once")
+    try require(generator.prompts.first?.contains("原始文本：原始转写文本") == true, "llm prompt should contain template and transcript")
+    try require(injector.lastText == "LLM加工后的结果。", "injector should receive llm output instead of prompt")
+    try require(result.clean.cleanText == "LLM加工后的结果。", "process result should store llm output text")
 }
 
 @MainActor
@@ -484,10 +587,92 @@ func runPerformanceThresholdChecks() async throws {
     try require(p95 < 1800, "P95 latency should be below 1800ms")
 }
 
+@MainActor
+func runPrototypeMigrationChecks() async throws {
+    let matcher = SkillMatcher()
+    let matching = SkillMatchingConfig(
+        bundleSkillMap: ["com.apple.dt.Xcode": "prompt"],
+        categorySkillMap: [.development: "xiaohongshu", .general: "transcribe"],
+        defaultSkillId: "transcribe"
+    )
+    let id1 = matcher.resolveSkillId(bundleId: "com.apple.dt.Xcode", category: .development, matching: matching)
+    let id2 = matcher.resolveSkillId(bundleId: "com.unknown.app", category: .development, matching: matching)
+    let id3 = matcher.resolveSkillId(bundleId: "com.unknown.app", category: .communication, matching: matching)
+    try require(id1 == "prompt", "bundle 精确匹配应优先")
+    try require(id2 == "xiaohongshu", "类别匹配应作为第二优先级")
+    try require(id3 == "transcribe", "默认技能应兜底")
+
+    var cleanerSnapshot = FileSkillStore.defaultSnapshot
+    cleanerSnapshot.matching.bundleSkillMap = [:]
+    cleanerSnapshot.matching.categorySkillMap = [:]
+    cleanerSnapshot.matching.defaultSkillId = "xiaohongshu"
+    let cleanerStore = InMemorySkillStore(snapshot: cleanerSnapshot)
+    let cleaner = RuleBasedTextCleaner(skillStore: cleanerStore, matcher: SkillMatcher(), generator: StubPromptGenerator())
+    let context = ContextInfo(bundleId: "com.unknown.app", appCategory: .general, inputRole: "field", locale: "zh-CN")
+    let articleResult = await cleaner.cleanText(transcript: "今天完成接口联调", context: context)
+    try require(articleResult.styleTag == "小红书文案", "默认技能应驱动清洗风格")
+    try require(articleResult.cleanText.contains("今天完成接口联调"), "小红书模板应驱动 llm 处理原始内容")
+
+    cleanerSnapshot.matching.defaultSkillId = "prompt"
+    cleanerStore.saveSkills(cleanerSnapshot)
+    let promptResult = await cleaner.cleanText(transcript: "新增重试链路", context: context)
+    try require(promptResult.styleTag == "提示词", "切换默认技能后应命中新风格")
+    try require(promptResult.cleanText.contains("新增重试链路"), "提示词模板应驱动 llm 处理用户指令")
+
+    let historyStore = InMemoryHistoryStore()
+    let skillStore = InMemorySkillStore()
+    var setting = FileAppSettingsStore.defaultSettings
+    setting.historyLimit = 2
+    let settingsStore = InMemorySettingsStore(settings: setting)
+    let launchManager = StubLaunchAtLoginManager()
+
+    let vm = AppViewModel(
+        pipeline: VoicePipeline(
+            stateMachine: StubStateStore(),
+            audioCapture: StubAudio(),
+            transcriber: StubTranscriber(),
+            contextResolver: StubContextResolver(),
+            cleaner: StubCleanerSuccess(),
+            injector: StubInjector(),
+            permissions: StubPermissions(),
+            logger: StubLogger(),
+            metrics: StubMetrics()
+        ),
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler(),
+        historyStore: historyStore,
+        skillStore: skillStore,
+        settingsStore: settingsStore,
+        launchAtLoginManager: launchManager
+    )
+    vm.skipOnboarding()
+    for _ in 0..<3 {
+        await vm.simulatePressForTesting()
+        await vm.simulateReleaseForTesting()
+    }
+    try require(vm.historyItems.count == 2, "历史记录应按上限截断")
+    try require(historyStore.items.count == 2, "历史记录应持久化到本地存储实现")
+
+    try require(vm.deleteSkill("transcribe") == false, "预装技能不能删除")
+    vm.setDefaultSkill("xiaohongshu")
+    try require(vm.skillSnapshot.matching.defaultSkillId == "xiaohongshu", "默认技能应可切换")
+    try require(vm.skillSnapshot.matching.categorySkillMap[.general] == "xiaohongshu", "切换默认技能时应同步通用类别映射")
+    vm.addCustomSkill(name: "测试技能", template: "{{text}}", styleHint: "测试")
+    let customId = vm.skillSnapshot.profiles.first(where: { $0.type == .custom })?.id ?? ""
+    try require(customId.isEmpty == false, "应能新增自定义技能")
+    try require(vm.deleteSkill(customId), "应能删除自定义技能")
+
+    vm.setLaunchAtLogin(true)
+    try require(launchManager.latest, "应将开机启动设置写入系统管理器")
+    vm.setMenuBarSummaryVisible(false)
+    try require(vm.menuBarSummary.isEmpty, "关闭菜单栏摘要后应清空摘要")
+}
+
 Task {
     do {
         try runStateMachineChecks()
-        try runCleanerChecks()
+        try await runCleanerChecks()
+        try await runPromptToLLMInjectionChecks()
         try await runPipelineFallbackChecks()
         try await runPermissionErrorChecks()
         try await runRetryChecks()
@@ -496,6 +681,7 @@ Task {
         try runClipboardInjectorChecks()
         try await runAppStateMachineChecks()
         try await runPerformanceThresholdChecks()
+        try await runPrototypeMigrationChecks()
         print("SELF_CHECK_OK")
         exit(0)
     } catch let SelfCheckFailure.failed(message) {
