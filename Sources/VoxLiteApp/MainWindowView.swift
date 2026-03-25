@@ -623,19 +623,6 @@ private extension MainWindowView {
         }
     }
 
-    func settingPairRow(_ name: String, value: String) -> some View {
-        HStack {
-            Text(name)
-                .font(.system(size: 13))
-                .foregroundStyle(palette.mutedText)
-            Spacer()
-            Text(value)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(palette.bodyText)
-        }
-        .padding(.vertical, 9)
-    }
-
     func sectionCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if title.isEmpty == false {
@@ -888,25 +875,6 @@ private extension MainWindowView {
             )
         }
         .buttonStyle(.plain)
-    }
-
-    func statusBanner(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12, weight: .semibold))
-            Text(text)
-                .font(.system(size: 12, weight: .semibold))
-        }
-        .foregroundStyle(Color(hex: "#9b6a18"))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#fff2dd"))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(hex: "#ffd898"), lineWidth: 1)
-        )
     }
 
     func defaultSkillTag(_ text: String) -> some View {
