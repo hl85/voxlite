@@ -290,6 +290,7 @@ public final class AppViewModel: ObservableObject {
     }
 
     private func updateOnboardingStep() {
+        guard !appSettings.onboardingCompleted else { return }
         if !permissionSnapshot.microphoneGranted {
             onboardingStep = 1
         } else if !permissionSnapshot.accessibilityGranted {
@@ -389,7 +390,7 @@ public final class AppViewModel: ObservableObject {
             cleanStyleTag = result.clean.styleTag
             speechStatus = result.transcript.success ? "正常（端侧）" : "异常"
             refreshFoundationModelAvailability()
-            if trialRunPassed && permissionSnapshot.allGranted {
+            if showOnboarding && trialRunPassed && permissionSnapshot.allGranted {
                 updateOnboardingStep()
             }
             if result.clean.usedFallback {

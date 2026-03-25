@@ -63,13 +63,6 @@ struct MainWindowView: View {
             .padding(12)
         }
         .frame(width: 920, height: 600)
-        .onAppear {
-            if model.showOnboarding {
-                model.selectModule(.welcome)
-            } else {
-                model.selectModule(.home)
-            }
-        }
         .sheet(isPresented: $isSkillEditorPresented) {
             skillEditorSheet
         }

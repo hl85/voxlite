@@ -82,8 +82,21 @@ struct VoxLiteApp: App {
             })
             .environmentObject(model)
         } label: {
-            Image(systemName: model.showRecordingAnimation
-                  ? "waveform.circle.fill" : "waveform")
+            switch model.appSettings.menuBarDisplayMode {
+            case .iconOnly:
+                Image(systemName: model.showRecordingAnimation
+                      ? "waveform.circle.fill" : "waveform")
+            case .iconAndSummary:
+                HStack(spacing: 4) {
+                    Image(systemName: model.showRecordingAnimation
+                          ? "waveform.circle.fill" : "waveform")
+                    if !model.menuBarSummary.isEmpty {
+                        Text(model.menuBarSummary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+            }
         }
         .menuBarExtraStyle(.window)
     }

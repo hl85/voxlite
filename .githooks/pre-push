@@ -6,6 +6,25 @@
 set -euo pipefail
 
 PROTECTED_BRANCHES=("main" "develop")
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+run_swift_build() {
+    local output
+    if output=$(swift build --disable-sandbox 2>&1); then
+        echo "$output"
+        return 0
+    fi
+    echo "$output"
+    if echo "$output" | grep -q "Missing or empty JSON output from manifest compilation"; then
+        xattr -dr com.apple.quarantine "$REPO_ROOT/Package.swift" "$REPO_ROOT/.githooks" >/dev/null 2>&1 || true
+        output=$(swift build --disable-sandbox 2>&1) || true
+        echo "$output"
+        if echo "$output" | grep -q "Build complete!"; then
+            return 0
+        fi
+    fi
+    return 1
+}
 
 while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
     BRANCH=$(echo "$REMOTE_REF" | sed 's|refs/heads/||')
@@ -24,7 +43,7 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
         echo ""
 
         echo "📦 [1/2] swift build..."
-        if ! swift build --disable-sandbox 2>&1; then
+        if ! run_swift_build; then
             echo ""
             echo "❌ 构建失败，推送已拦截。"
             exit 1
