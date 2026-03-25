@@ -44,6 +44,48 @@ func runHotKeyDisplayStringChecks() throws {
     try require(shiftCtrlA.displayString == "^⇧A", "Ctrl+Shift+A should display '^⇧A'")
 }
 
+func runKeyCodeToStringRegressionChecks() throws {
+    func keyString(for keyCode: UInt16) -> String {
+        KeyCodeConverter.string(for: keyCode)
+    }
+
+    let knownKeyCodes: [(UInt16, String)] = [
+        (0x00, "A"),
+        (0x01, "S"),
+        (0x0C, "Q"),
+        (0x12, "1"),
+        (0x1D, "0"),
+        (0x31, "Space"),
+        (0x33, "Delete"),
+        (0x35, "Escape"),
+        (0x3F, "Fn"),
+    ]
+    for (keyCode, expected) in knownKeyCodes {
+        let result = keyString(for: keyCode)
+        try require(result == expected, "KeyCodeConverter.string(for: 0x\(String(keyCode, radix: 16))) should return \"\(expected)\", got \"\(result)\"")
+    }
+
+    let previouslyMissingKeyCodes: [(UInt16, String)] = [
+        (0x6E, "▤"),
+        (0x6A, "F16"),
+        (0x3C, "⇧"),
+        (0x73, "Home"),
+        (0x77, "End"),
+        (0x74, "PageUp"),
+        (0x79, "PageDown"),
+        (0x75, "⌦"),
+        (0x72, "Help"),
+    ]
+    for (keyCode, expected) in previouslyMissingKeyCodes {
+        let result = keyString(for: keyCode)
+        try require(result == expected, "KeyCodeConverter.string(for: 0x\(String(keyCode, radix: 16))) should return \"\(expected)\", got \"\(result)\"")
+    }
+
+    let unknownKeyCode: UInt16 = 9999
+    let unknownResult = keyString(for: unknownKeyCode)
+    try require(unknownResult == "Key 9999", "KeyCodeConverter.string(for: 9999) should return \"Key 9999\", got \"\(unknownResult)\"")
+}
+
 func runCleaningModeCodecChecks() throws {
     let encoder = JSONEncoder()
     let decoder = JSONDecoder()
@@ -543,6 +585,98 @@ func runClipboardInjectorChecks() throws {
 }
 
 @MainActor
+func runSelectedModuleRegressionChecks() throws {
+    var settings = FileAppSettingsStore.defaultSettings
+    settings.onboardingCompleted = true
+
+    let vm = AppViewModel(
+        pipeline: VoicePipeline(
+            stateMachine: StubStateStore(),
+            audioCapture: StubAudio(),
+            transcriber: StubTranscriber(),
+            contextResolver: StubContextResolver(),
+            cleaner: StubCleanerSuccess(),
+            injector: StubInjector(),
+            permissions: StubPermissions(),
+            logger: StubLogger(),
+            metrics: StubMetrics()
+        ),
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler(),
+        settingsStore: InMemorySettingsStore(settings: settings)
+    )
+
+    try require(vm.showOnboarding == false, "completed onboarding should hide onboarding")
+    try require(vm.selectedModule == .home, "completed onboarding should start on home")
+
+    vm.selectModule(.settings)
+    try require(vm.selectedModule == .settings, "selectModule(.settings) should set selectedModule to settings")
+
+    let previous = vm.selectedModule
+    vm.selectModule(.settings)
+    try require(vm.selectedModule == previous, "re-selecting settings should be a no-op")
+
+    vm.selectModule(.home)
+    vm.selectModule(.settings)
+    try require(vm.selectedModule == .settings, "selectedModule should remain .settings after navigation cycle")
+
+    vm.selectModule(.home)
+    vm.selectModule(.settings)
+    try require(vm.selectedModule == .settings, "selectedModule should remain stable across multiple navigation cycles")
+}
+
+@MainActor
+func runMenuBarDisplayModeRegressionChecks() throws {
+    let vm = AppViewModel(
+        pipeline: VoicePipeline(
+            stateMachine: StubStateStore(),
+            audioCapture: StubAudio(),
+            transcriber: StubTranscriber(),
+            contextResolver: StubContextResolver(),
+            cleaner: StubCleanerSuccess(),
+            injector: StubInjector(),
+            permissions: StubPermissions(),
+            logger: StubLogger(),
+            metrics: StubMetrics()
+        ),
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler(),
+        settingsStore: InMemorySettingsStore(settings: FileAppSettingsStore.defaultSettings)
+    )
+
+    vm.appSettings.menuBarDisplayMode = .iconOnly
+    vm.appSettings.showRecentSummary = false
+    try require(vm.appSettings.menuBarDisplayMode == .iconOnly, "menuBarDisplayMode should store iconOnly")
+    try require(vm.appSettings.showRecentSummary == false, "iconOnly should keep recent summary hidden")
+
+    vm.appSettings.menuBarDisplayMode = .iconAndSummary
+    vm.appSettings.showRecentSummary = true
+    try require(vm.appSettings.menuBarDisplayMode == .iconAndSummary, "menuBarDisplayMode should store iconAndSummary")
+    try require(vm.appSettings.showRecentSummary, "iconAndSummary should keep recent summary visible")
+
+    vm.menuBarSummary = "Issue 3 regression summary"
+    let summary: String = vm.menuBarSummary
+    try require(summary == "Issue 3 regression summary", "menuBarSummary should be readable as String")
+
+    vm.appSettings.menuBarDisplayMode = .iconAndSummary
+    vm.appSettings.showRecentSummary = true
+    vm.menuBarSummary = "Dynamic summary text"
+
+    let displayMode: MenuBarDisplayMode = vm.appSettings.menuBarDisplayMode
+    let showSummary: Bool = vm.appSettings.showRecentSummary
+    let dynamicSummary: String = vm.menuBarSummary
+
+    try require(displayMode == .iconAndSummary, "ViewModel should expose menuBarDisplayMode")
+    try require(dynamicSummary == "Dynamic summary text", "ViewModel should expose menuBarSummary as String")
+    try require(showSummary, "ViewModel should expose showRecentSummary flag")
+
+    vm.appSettings.menuBarDisplayMode = .iconOnly
+    vm.setMenuBarSummaryVisible(false)
+    let iconOnlySummary: String = vm.menuBarSummary
+    try require(iconOnlySummary.isEmpty, "iconOnly mode should result in empty menuBarSummary")
+}
+
+@MainActor
 func runAppStateMachineChecks() async throws {
     let onboardingPermissions = MutablePermissionsFlow()
     let onboardingPipeline = VoicePipeline(
@@ -729,6 +863,7 @@ Task {
     do {
         try runStateMachineChecks()
         try runHotKeyDisplayStringChecks()
+        try runKeyCodeToStringRegressionChecks()
         try runCleaningModeCodecChecks()
         try runErrorDetailChecks()
         try runAppSettingsOnboardingChecks()
@@ -740,6 +875,8 @@ Task {
         try await runTimeoutChecks()
         try runFnMonitorChecks()
         try runClipboardInjectorChecks()
+        try runSelectedModuleRegressionChecks()
+        try runMenuBarDisplayModeRegressionChecks()
         try await runAppStateMachineChecks()
         try await runPerformanceThresholdChecks()
         try await runPrototypeMigrationChecks()
