@@ -13,7 +13,7 @@ if echo "$COMMIT_MSG" | grep -qE "^(Merge|Revert) "; then
     exit 0
 fi
 
-PATTERN="^(feat|fix|test|refactor|perf|chore|docs|ci)(\([a-z0-9_/-]+\))?: .{1,100}$"
+PATTERN="^(feat|fix|test|refactor|perf|chore|docs|ci)(\([a-z0-9._/-]+\))?: .{1,100}$"
 
 if ! echo "$COMMIT_MSG" | head -1 | grep -qE "$PATTERN"; then
     echo ""
