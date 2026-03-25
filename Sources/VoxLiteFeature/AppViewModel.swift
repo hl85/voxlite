@@ -66,12 +66,14 @@ public final class AppViewModel: ObservableObject {
         self.launchAtLoginManager = launchAtLoginManager ?? UserDefaultsLaunchAtLoginManager()
         self.foundationModelAvailabilityProvider = foundationModelAvailabilityProvider
         self.permissionSnapshot = permissions.currentPermissionSnapshot()
-        self.showOnboarding = !permissionSnapshot.allGranted
-        self.onboardingStep = showOnboarding ? 1 : 4
-        self.selectedModule = showOnboarding ? .welcome : .home
+        let settings = self.settingsStore.loadSettings()
+        self.appSettings = settings
+        let onboardingDone = settings.onboardingCompleted && permissionSnapshot.allGranted
+        self.showOnboarding = !onboardingDone
+        self.onboardingStep = onboardingDone ? 5 : (permissionSnapshot.allGranted ? 4 : 1)
+        self.selectedModule = onboardingDone ? .home : .welcome
         self.historyItems = self.historyStore.loadHistory()
         self.skillSnapshot = self.skillStore.loadSkills()
-        self.appSettings = self.settingsStore.loadSettings()
         self.menuBarSummary = historyItems.first?.outputText ?? ""
         self.hotKeySettings.conflictMessage = ""
         refreshFoundationModelAvailability()
@@ -79,7 +81,7 @@ public final class AppViewModel: ObservableObject {
     }
 
     public func startMonitor() {
-        if !showOnboarding {
+        if !showOnboarding || permissionSnapshot.allGranted {
             monitor?.start()
         }
     }
@@ -252,6 +254,15 @@ public final class AppViewModel: ObservableObject {
         saveSettings()
     }
 
+    public func resetOnboarding() {
+        appSettings.onboardingCompleted = false
+        trialRunPassed = false
+        showOnboarding = true
+        saveSettings()
+        refreshPermissionSnapshot()
+        selectedModule = .welcome
+    }
+
     public func retryLatest() async {
         guard canRetry else { return }
         lastError = "请按住快捷键重新录入"
@@ -285,12 +296,20 @@ public final class AppViewModel: ObservableObject {
             onboardingStep = 2
         } else if !permissionSnapshot.speechRecognitionGranted {
             onboardingStep = 3
-        } else {
+        } else if !trialRunPassed {
             onboardingStep = 4
-            showOnboarding = false
-            selectedModule = .home
-            startMonitor()
+        } else {
+            onboardingStep = 5
+            completeOnboarding()
         }
+    }
+
+    private func completeOnboarding() {
+        showOnboarding = false
+        appSettings.onboardingCompleted = true
+        saveSettings()
+        selectedModule = .home
+        startMonitor()
     }
 
     private func configureMonitor() {
@@ -370,6 +389,9 @@ public final class AppViewModel: ObservableObject {
             cleanStyleTag = result.clean.styleTag
             speechStatus = result.transcript.success ? "正常（端侧）" : "异常"
             refreshFoundationModelAvailability()
+            if trialRunPassed && permissionSnapshot.allGranted {
+                updateOnboardingStep()
+            }
             if result.clean.usedFallback {
                 lastError = "清洗模型不可用，已降级为仅转录"
                 actionTitle = ""

@@ -17,6 +17,9 @@ struct MainWindowView: View {
     @State private var selectedRunningAppBundleId = ""
     @State private var isHotKeyCapturing = false
     @State private var hotKeyCaptureText = ""
+    @State private var easterEggTapCount = 0
+    @State private var easterEggTimer: Timer?
+    @State private var showTestMenu = false
 
     var body: some View {
         ZStack {
@@ -145,8 +148,42 @@ private extension MainWindowView {
                 .padding(.horizontal, 18)
                 .padding(.top, 20)
                 .padding(.bottom, 18)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    easterEggTapCount += 1
+                    easterEggTimer?.invalidate()
+                    if easterEggTapCount >= 7 {
+                        easterEggTapCount = 0
+                        showTestMenu = true
+                    } else {
+                        easterEggTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
+                            Task { @MainActor in
+                                easterEggTapCount = 0
+                            }
+                        }
+                    }
+                }
+                .popover(isPresented: $showTestMenu, arrowEdge: .trailing) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("测试菜单")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(palette.titleText)
+                        Divider()
+                        Button("重置引导") {
+                            model.resetOnboarding()
+                            showTestMenu = false
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(palette.bodyText)
+                        .font(.system(size: 13))
+                    }
+                    .padding(12)
+                    .frame(width: 160)
+                }
 
-            menuButton("欢迎", .welcome)
+            if !model.appSettings.onboardingCompleted {
+                menuButton("欢迎", .welcome)
+            }
             menuButton("主页", .home)
             menuButton("技能", .skills)
             menuButton("设置", .settings)
@@ -199,14 +236,19 @@ private extension MainWindowView {
 
     var welcomeModule: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionCard(title: "欢迎引导") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("步骤 \(model.onboardingStep) / 5")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(palette.bodyText)
+            sectionCard(title: "引导进度") {
+                VStack(alignment: .leading, spacing: 12) {
                     Text("完成权限授权后请进行一次试运行，验证真实录音链路可用。")
                         .font(.system(size: 13))
                         .foregroundStyle(palette.mutedText)
+                    onboardingStepIndicator
+                }
+            }
+            if !model.permissionSnapshot.speechRecognitionGranted && model.speechStatus.contains("不可用") {
+                infoBanner("语音识别不可用，请前往「设置」配置语音识别服务。") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        model.selectModule(.settings)
+                    }
                 }
             }
             sectionCard(title: "权限状态") {
@@ -240,16 +282,28 @@ private extension MainWindowView {
                     .disabled(!model.permissionSnapshot.allGranted)
                 }
             }
-            sectionCard(title: "引导进度") {
-                HStack(spacing: 8) {
-                    guideStep("欢迎", active: model.onboardingStep == 1, done: model.onboardingStep > 1)
-                    guideStep("麦克风", active: model.onboardingStep == 2, done: model.onboardingStep > 2)
-                    guideStep("辅助功能", active: model.onboardingStep == 3, done: model.onboardingStep > 3)
-                    guideStep("语音识别", active: model.onboardingStep == 4, done: model.onboardingStep > 4)
-                    guideStep("试运行", active: model.trialRunPassed, done: model.trialRunPassed)
+        }
+    }
+
+    var onboardingStepIndicator: some View {
+        let steps: [(String, Int)] = [
+            ("麦克风权限", 1), ("辅助功能", 2), ("语音识别", 3), ("试运行", 4), ("完成", 5)
+        ]
+        let currentStep = model.trialRunPassed ? 5 : model.onboardingStep
+        return HStack(spacing: 0) {
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                let isDone = currentStep > step.1
+                let isActive = currentStep == step.1
+                guideStep(step.0, active: isActive, done: isDone)
+                if index < steps.count - 1 {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(isDone ? Color(hex: "#1d8252") : palette.mutedText.opacity(0.5))
+                        .padding(.horizontal, 3)
                 }
             }
         }
+        .animation(.easeInOut(duration: 0.3), value: currentStep)
     }
 
     func permissionRow(_ title: String, granted: Bool, action: @escaping () -> Void) -> some View {
@@ -289,7 +343,7 @@ private extension MainWindowView {
                         .foregroundStyle(palette.mutedText)
                 } else {
                     VStack(spacing: 10) {
-                        ForEach(Array(model.historyItems.prefix(20))) { item in
+                        ForEach(Array(model.historyItems.prefix(model.appSettings.historyLimit))) { item in
                             historyItemRow(item)
                         }
                     }

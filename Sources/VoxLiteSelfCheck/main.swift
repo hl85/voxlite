@@ -568,7 +568,8 @@ func runAppStateMachineChecks() async throws {
     await onboardingVM.requestPermission(.accessibility)
     try require(onboardingVM.onboardingStep == 3, "after accessibility should move to speech step")
     await onboardingVM.requestPermission(.speechRecognition)
-    try require(onboardingVM.showOnboarding == false, "onboarding should close when all permissions granted")
+    try require(onboardingVM.showOnboarding == true, "onboarding should stay open until trial run passes")
+    try require(onboardingVM.onboardingStep == 4, "after all permissions should move to trial run step")
 
     let denyPermissions = StubPermissionsMicDenied()
     let denyPipeline = VoicePipeline(
