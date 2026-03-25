@@ -693,7 +693,8 @@ func runAppStateMachineChecks() async throws {
     let onboardingVM = AppViewModel(
         pipeline: onboardingPipeline,
         permissions: onboardingPermissions,
-        performanceSampler: PerformanceSampler()
+        performanceSampler: PerformanceSampler(),
+        settingsStore: InMemorySettingsStore()
     )
     try require(onboardingVM.showOnboarding, "onboarding should show when permissions missing")
     try require(onboardingVM.onboardingStep == 1, "onboarding should start from microphone step")
@@ -720,7 +721,8 @@ func runAppStateMachineChecks() async throws {
     let denyVM = AppViewModel(
         pipeline: denyPipeline,
         permissions: denyPermissions,
-        performanceSampler: PerformanceSampler()
+        performanceSampler: PerformanceSampler(),
+        settingsStore: InMemorySettingsStore()
     )
     await denyVM.simulatePressForTesting()
     try require(denyVM.stateText == "Failed", "press with missing permission should fail")
@@ -742,7 +744,8 @@ func runAppStateMachineChecks() async throws {
     let timeoutVM = AppViewModel(
         pipeline: timeoutPipeline,
         permissions: StubPermissions(),
-        performanceSampler: PerformanceSampler()
+        performanceSampler: PerformanceSampler(),
+        settingsStore: InMemorySettingsStore()
     )
     await timeoutVM.simulatePressForTesting()
     await timeoutVM.simulateReleaseForTesting()
