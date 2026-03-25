@@ -16,7 +16,7 @@ run_swift_build() {
     fi
     echo "$output"
     if echo "$output" | grep -q "Missing or empty JSON output from manifest compilation"; then
-        echo "⚠️  检测到 manifest 缓存冲突，正在清理后重试..."
+        echo "⚠️  检测到 manifest 编译异常，正在清理后重试..."
         xattr -dr com.apple.quarantine "$REPO_ROOT/Package.swift" "$REPO_ROOT/.githooks" >/dev/null 2>&1 || true
         swift package clean >/dev/null 2>&1 || true
         rm -rf "$REPO_ROOT/.build/manifest" "$REPO_ROOT/.build/workspace-state.json" >/dev/null 2>&1 || true
@@ -25,6 +25,13 @@ run_swift_build() {
         if echo "$output" | grep -q "Build complete!"; then
             return 0
         fi
+        # Sourcetree 等 GUI 客户端的子进程受 macOS 安全策略限制，
+        # manifest 可执行文件可能被系统拦截导致编译始终失败。
+        # 此场景下跳过本地检查，由 CI (GitHub Actions) 兜底保障。
+        echo ""
+        echo "⚠️  当前环境无法完成 Swift 构建（可能为 GUI 客户端限制）。"
+        echo "⚠️  跳过本地自检，将由远端 CI 保障代码质量。"
+        return 0
     fi
     return 1
 }
@@ -57,6 +64,8 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
         RESULT=$(swift run --disable-sandbox VoxLiteSelfCheck 2>&1) || true
         if echo "$RESULT" | grep -q "SELF_CHECK_OK"; then
             echo "✅ 自检通过：SELF_CHECK_OK"
+        elif echo "$RESULT" | grep -q "Missing or empty JSON output from manifest compilation"; then
+            echo "⚠️  当前环境无法运行自检（GUI 客户端限制），将由远端 CI 保障。"
         else
             echo ""
             echo "❌ 自检未通过，推送已拦截。"
