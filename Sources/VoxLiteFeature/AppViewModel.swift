@@ -114,9 +114,6 @@ public final class AppViewModel: ObservableObject {
     }
 
     public func selectModule(_ module: MainModule) {
-        if module == .skills && foundationModelAvailability == .deviceNotEligible {
-            return
-        }
         selectedModule = module
     }
 
@@ -245,6 +242,14 @@ public final class AppViewModel: ObservableObject {
     public func openSettingForRecommendedPermission() {
         guard let recommendedSettingItem else { return }
         permissions.openSystemSettings(for: recommendedSettingItem)
+    }
+
+    public func openSystemSettings(for item: PermissionItem) {
+        permissions.openSystemSettings(for: item)
+    }
+
+    public func saveRemoteModelSettings() {
+        saveSettings()
     }
 
     public func retryLatest() async {
@@ -446,9 +451,6 @@ public final class AppViewModel: ObservableObject {
         let state = foundationModelAvailabilityProvider.foundationModelAvailability()
         foundationModelAvailability = state
         foundationModelStatus = foundationModelStatusText(state)
-        if state == .deviceNotEligible && selectedModule == .skills {
-            selectedModule = .home
-        }
     }
 
     private func foundationModelStatusText(_ state: FoundationModelAvailabilityState) -> String {

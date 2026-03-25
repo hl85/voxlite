@@ -15,6 +15,8 @@ struct MainWindowView: View {
     @State private var draftIsDefault = false
     @State private var draftBindings: [AppBinding] = []
     @State private var selectedRunningAppBundleId = ""
+    @State private var isHotKeyCapturing = false
+    @State private var hotKeyCaptureText = ""
 
     var body: some View {
         ZStack {
@@ -163,9 +165,7 @@ private extension MainWindowView {
     }
 
     func menuButton(_ title: String, _ module: MainModule) -> some View {
-        let disabled = module == .skills && model.foundationModelAvailability == .deviceNotEligible
         return Button {
-            guard !disabled else { return }
             withAnimation(.easeInOut(duration: 0.18)) {
                 model.selectModule(module)
             }
@@ -191,9 +191,7 @@ private extension MainWindowView {
         }
         .buttonStyle(.plain)
         .foregroundStyle(
-            disabled
-            ? palette.sidebarMutedText.opacity(0.55)
-            : (model.selectedModule == module ? palette.sidebarActiveText : palette.sidebarMutedText)
+            model.selectedModule == module ? palette.sidebarActiveText : palette.sidebarMutedText
         )
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
@@ -281,7 +279,7 @@ private extension MainWindowView {
                     statusItemRow("Speech", model.speechStatus)
                     statusItemRow("Foundation Model", model.foundationModelStatus)
                     statusItemRow("清洗策略", model.cleanStyleTag)
-                    statusItemRow("最后错误", model.lastError.isEmpty ? "无" : "有")
+                    errorDisplayRow()
                 }
             }
             sectionCard(title: "语音识别历史记录") {
@@ -301,10 +299,15 @@ private extension MainWindowView {
     }
 
     var skillsModule: some View {
-        let disabled = model.foundationModelAvailability == .deviceNotEligible
+        let modelUnavailable = model.foundationModelAvailability == .deviceNotEligible
+            || model.foundationModelAvailability == .unavailable
         return VStack(alignment: .leading, spacing: 12) {
-            if disabled {
-                statusBanner("当前设备不支持 Apple Foundation Models，技能模块已停用。")
+            if modelUnavailable {
+                infoBanner("模型暂不可用，部分功能受限。请前往「设置 → 模型设置」配置远端模型。") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        model.selectModule(.settings)
+                    }
+                }
             }
             HStack {
                 Text("技能管理")
@@ -315,8 +318,8 @@ private extension MainWindowView {
                     startAddSkillEditor()
                 }
                 .buttonStyle(VoxPrimaryButtonStyle())
-                .disabled(disabled)
-                .opacity(disabled ? 0.55 : 1)
+                .disabled(modelUnavailable)
+                .opacity(modelUnavailable ? 0.55 : 1)
             }
             ForEach(model.skillSnapshot.profiles) { skill in
                 sectionCard(title: "") {
@@ -340,6 +343,7 @@ private extension MainWindowView {
                                 startEditSkillEditor(skill)
                             }
                             .buttonStyle(VoxSecondaryButtonStyle())
+                            .disabled(modelUnavailable)
                             Button("删除") {
                                 _ = model.deleteSkill(skill.id)
                             }
@@ -352,8 +356,6 @@ private extension MainWindowView {
                 }
             }
         }
-        .opacity(disabled ? 0.55 : 1)
-        .allowsHitTesting(!disabled)
         .onAppear {
             model.reloadSkillSnapshot()
         }
@@ -363,28 +365,139 @@ private extension MainWindowView {
         VStack(alignment: .leading, spacing: 12) {
             sectionCard(title: "基础设置") {
                 VStack(spacing: 10) {
-                    settingPairRow("录音快捷键", value: model.appSettings.hotKeyDescription)
-                    settingPairRow("开机自动启动", value: model.appSettings.launchAtLoginEnabled ? "开启" : "关闭")
-                    settingPairRow("状态栏菜单", value: model.appSettings.showRecentSummary ? "仅图标+摘要" : "仅图标")
+                    settingRow("录音快捷键") {
+                        HotKeyCaptureInput(
+                            text: $hotKeyCaptureText,
+                            isCapturing: $isHotKeyCapturing,
+                            onStartCapture: {
+                                isHotKeyCapturing = true
+                                hotKeyCaptureText = ""
+                            },
+                            onCapture: { config in
+                                guard let config else { return }
+                                hotKeyCaptureText = config.displayString
+                                model.updateHotKeyConfiguration(config)
+                                isHotKeyCapturing = false
+                            },
+                            onCancel: {
+                                isHotKeyCapturing = false
+                                hotKeyCaptureText = model.appSettings.hotKeyDescription
+                            },
+                            onSubmit: {
+                                isHotKeyCapturing = false
+                            }
+                        )
+                        .frame(width: 200, height: 24)
+                        .onAppear {
+                            hotKeyCaptureText = model.appSettings.hotKeyDescription
+                        }
+                    }
+                    settingRow("开机自动启动") {
+                        Toggle("", isOn: Binding(
+                            get: { model.appSettings.launchAtLoginEnabled },
+                            set: { model.setLaunchAtLogin($0) }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+                    settingRow("状态栏菜单") {
+                        Picker("", selection: Binding(
+                            get: { model.appSettings.menuBarDisplayMode },
+                            set: { newMode in
+                                model.appSettings.menuBarDisplayMode = newMode
+                                model.setMenuBarSummaryVisible(newMode == .iconAndSummary)
+                            }
+                        )) {
+                            Text("仅图标").tag(MenuBarDisplayMode.iconOnly)
+                            Text("图标+摘要").tag(MenuBarDisplayMode.iconAndSummary)
+                        }
+                        .labelsHidden()
+                        .frame(width: 140)
+                    }
                 }
             }
             sectionCard(title: "权限入口") {
-                HStack(spacing: 10) {
-                    Button("麦克风") { Task { await model.requestPermission(.microphone) } }
-                        .buttonStyle(VoxSecondaryButtonStyle())
-                    Button("辅助功能") { Task { await model.requestPermission(.accessibility) } }
-                        .buttonStyle(VoxSecondaryButtonStyle())
-                    Button("语音识别") { Task { await model.requestPermission(.speechRecognition) } }
-                        .buttonStyle(VoxSecondaryButtonStyle())
+                VStack(spacing: 8) {
+                    permissionSettingRow("麦克风", granted: model.permissionSnapshot.microphoneGranted) {
+                        model.openSystemSettings(for: .microphone)
+                    }
+                    permissionSettingRow("辅助功能", granted: model.permissionSnapshot.accessibilityGranted) {
+                        model.openSystemSettings(for: .accessibility)
+                    }
+                    permissionSettingRow("语音识别", granted: model.permissionSnapshot.speechRecognitionGranted) {
+                        model.openSystemSettings(for: .speechRecognition)
+                    }
                 }
             }
             sectionCard(title: "模型设置") {
                 VStack(spacing: 10) {
-                    statusRow("语音识别模型", model.appSettings.speechModel.localEnabled ? "本地模型（远端占位）" : "远端占位")
-                    statusRow("LLM 模型", model.appSettings.llmModel.localEnabled ? "本地模型（远端占位）" : "远端占位")
+                    statusRow("语音识别模型", model.appSettings.speechModel.localEnabled ? "本地模型（端侧）" : "未启用")
+                    statusRow("LLM 模型", model.appSettings.llmModel.localEnabled ? "本地模型（端侧）" : "未启用")
+                    Divider().overlay(palette.divider)
+                    Text("远端模型配置")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(palette.mutedText)
+                    settingRow("远端服务") {
+                        TextField("例如 openai", text: Binding(
+                            get: { model.appSettings.llmModel.remoteProvider },
+                            set: { model.appSettings.llmModel.remoteProvider = $0 }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                    }
+                    settingRow("远端地址") {
+                        TextField("https://api.example.com/v1", text: Binding(
+                            get: { model.appSettings.llmModel.remoteEndpoint },
+                            set: { model.appSettings.llmModel.remoteEndpoint = $0 }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 280)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("保存模型配置") {
+                            model.saveRemoteModelSettings()
+                        }
+                        .buttonStyle(VoxPrimaryButtonStyle())
+                    }
                 }
             }
         }
+        .onAppear {
+            model.refreshPermissionSnapshot()
+        }
+    }
+
+    func settingRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(palette.mutedText)
+            Spacer()
+            content()
+        }
+        .padding(.vertical, 2)
+    }
+
+    func permissionSettingRow(_ name: String, granted: Bool, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            Text(name)
+                .font(.system(size: 13))
+                .foregroundStyle(palette.bodyText)
+            Spacer()
+            if granted {
+                statusPill("已授权", tone: .ok)
+            } else {
+                statusPill("未授权", tone: .warn)
+            }
+            Button("打开系统设置") { action() }
+                .buttonStyle(VoxLightCapsuleButtonStyle())
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(palette.mainBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
     }
 
     func statusRow(_ name: String, _ status: String) -> some View {
@@ -413,6 +526,47 @@ private extension MainWindowView {
         .background(palette.mainBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
+    }
+
+    func errorDisplayRow() -> some View {
+        Group {
+            if model.lastError.isEmpty {
+                statusItemRow("最后错误", "无")
+            } else {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(model.lastError)
+                            .font(.system(size: 12))
+                            .foregroundStyle(palette.bodyText)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if model.canRetry {
+                            HStack {
+                                Spacer()
+                                Button("重试") {
+                                    Task { await model.retryLatest() }
+                                }
+                                .buttonStyle(VoxSecondaryButtonStyle())
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                } label: {
+                    HStack {
+                        Text("最后错误")
+                            .font(.system(size: 13))
+                            .foregroundStyle(palette.bodyText)
+                        Spacer()
+                        statusPill("有错误", tone: .danger)
+                    }
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 10)
+                .background(palette.mainBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
+            }
+        }
     }
 
     func settingPairRow(_ name: String, value: String) -> some View {
@@ -655,6 +809,31 @@ private extension MainWindowView {
             .padding(.vertical, 3)
             .background(bg)
             .clipShape(Capsule())
+    }
+
+    func infoBanner(_ text: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(text)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(Color(hex: "#2556b9"))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(hex: "#e0ecff"))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(hex: "#a8c6ff"), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     func statusBanner(_ text: String) -> some View {
