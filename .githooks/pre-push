@@ -16,7 +16,10 @@ run_swift_build() {
     fi
     echo "$output"
     if echo "$output" | grep -q "Missing or empty JSON output from manifest compilation"; then
+        echo "⚠️  检测到 manifest 缓存冲突，正在清理后重试..."
         xattr -dr com.apple.quarantine "$REPO_ROOT/Package.swift" "$REPO_ROOT/.githooks" >/dev/null 2>&1 || true
+        swift package clean >/dev/null 2>&1 || true
+        rm -rf "$REPO_ROOT/.build/manifest" "$REPO_ROOT/.build/workspace-state.json" >/dev/null 2>&1 || true
         output=$(swift build --disable-sandbox 2>&1) || true
         echo "$output"
         if echo "$output" | grep -q "Build complete!"; then
