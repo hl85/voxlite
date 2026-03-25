@@ -36,14 +36,14 @@ public protocol PermissionManaging {
     func openSystemSettings(for item: PermissionItem)
 }
 
-public protocol LoggerServing {
+public protocol LoggerServing: Sendable {
     func debug(_ message: String)
     func info(_ message: String)
     func warn(_ message: String)
     func error(_ message: String)
 }
 
-public protocol MetricsServing {
+public protocol MetricsServing: Sendable {
     func record(event: String, success: Bool, errorCode: VoxErrorCode?, latencyMs: Int)
     func percentile(_ event: String, _ value: Double) -> Int?
 }

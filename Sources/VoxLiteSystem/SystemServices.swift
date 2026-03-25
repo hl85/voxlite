@@ -6,7 +6,7 @@ import Speech
 import os
 import VoxLiteDomain
 
-public final class ConsoleLogger: LoggerServing {
+public final class ConsoleLogger: LoggerServing, Sendable {
     private let logger = Logger(subsystem: "ai.holoo.voxlite", category: "App")
 
     public init() {}

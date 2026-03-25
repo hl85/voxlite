@@ -115,8 +115,8 @@ func runAppSettingsOnboardingChecks() throws {
         showRecentSummary: true,
         summaryMaxLength: 48,
         historyLimit: 50,
-        speechModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: ""),
-        llmModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: "")
+        speechModel: ModelSetting(),
+        llmModel: ModelSetting()
     )
     try require(settings.onboardingCompleted == false, "onboarding should default to false")
     settings.onboardingCompleted = true
@@ -305,7 +305,7 @@ struct StubLogger: LoggerServing {
     func error(_ message: String) {}
 }
 
-final class SpyLogger: LoggerServing {
+final class SpyLogger: LoggerServing, @unchecked Sendable {
     private(set) var warnings: [String] = []
     func debug(_ message: String) {}
     func info(_ message: String) {}
@@ -313,7 +313,7 @@ final class SpyLogger: LoggerServing {
     func error(_ message: String) {}
 }
 
-final class StubMetrics: MetricsServing {
+final class StubMetrics: MetricsServing, Sendable {
     func record(event: String, success: Bool, errorCode: VoxErrorCode?, latencyMs: Int) {}
     func percentile(_ event: String, _ value: Double) -> Int? { nil }
 }
