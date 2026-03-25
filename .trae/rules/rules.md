@@ -3,7 +3,7 @@ alwaysApply: true
 ---
 # VoxLite 代码生成规则（<1000字）
 
-1. 仅实现 macOS MVP，技术栈固定为 Swift 6 + SwiftUI + AppKit；禁止引入第三方库。  
+1. 仅实现 macOS版本暂不实现其他平台，技术栈固定为 Swift 6 + SwiftUI + AppKit；禁止引入臃肿的第三方库，小型库除外。  
 2. 所有实现必须围绕主链路：按住 Fn 录音 → 松开处理 → 文本写入当前焦点输入框。  
 3. 架构必须分层：Input/Core/Output/System；禁止跨层直接调用，统一走协议与接口。  
 4. 事件监听使用 `CGEventTap + flagsChanged`；不得破坏系统原生快捷键行为。  

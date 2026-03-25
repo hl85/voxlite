@@ -80,6 +80,36 @@ public enum AppCategory: String, Codable, Hashable, Equatable, Sendable {
     case general
 }
 
+public enum CleaningMode: String, Codable, Equatable, Sendable {
+    case ruleOnly
+    case llmWithFallback
+}
+
+public enum SettingsSection: String, Codable, Equatable, Sendable {
+    case general
+    case microphone
+    case speechRecognition
+    case accessibility
+}
+
+public enum ErrorAction: Codable, Equatable, Sendable {
+    case goToSettings(SettingsSection)
+}
+
+public struct ErrorDetail: Codable, Equatable, Sendable {
+    public let summary: String
+    public let detail: String
+    public let errorCode: String?
+    public let recommendedAction: ErrorAction?
+
+    public init(summary: String, detail: String, errorCode: String? = nil, recommendedAction: ErrorAction? = nil) {
+        self.summary = summary
+        self.detail = detail
+        self.errorCode = errorCode
+        self.recommendedAction = recommendedAction
+    }
+}
+
 public struct TranscriptResult: Equatable, Sendable {
     public let text: String
     public let success: Bool
