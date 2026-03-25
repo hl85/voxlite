@@ -66,3 +66,9 @@ public protocol AppSettingsStore {
 public protocol LaunchAtLoginManaging {
     func setEnabled(_ enabled: Bool)
 }
+
+public protocol KeychainStoring: Sendable {
+    func store(_ value: String, forKey key: String) throws
+    func retrieve(forKey key: String) throws -> String?
+    func delete(forKey key: String) throws
+}
