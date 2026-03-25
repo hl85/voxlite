@@ -26,20 +26,55 @@ public final class AppViewModel: ObservableObject {
     @Published public var hotKeySettings: HotKeySettings = HotKeySettings()
     @Published public var speechStatus: String = "未知"
     @Published public var foundationModelStatus: String = "未知"
+    @Published public var foundationModelAvailability: FoundationModelAvailabilityState = .unavailable
+    @Published public var cleanStyleTag: String = "未处理"
+    @Published public var selectedModule: MainModule = .welcome
+    @Published public var historyItems: [TranscriptHistoryItem] = []
+    @Published public var skillSnapshot: SkillConfigSnapshot = FileSkillStore.defaultSnapshot
+    @Published public var appSettings: AppSettings = FileAppSettingsStore.defaultSettings
+    @Published public var menuBarSummary: String = ""
+    @Published public var trialRunPassed: Bool = false
 
     private let pipeline: VoicePipeline
     private let permissions: PermissionManaging
     private let performanceSampler: PerformanceSampler
+    private let historyStore: HistoryStore
+    private let skillStore: SkillStore
+    private let settingsStore: AppSettingsStore
+    private let launchAtLoginManager: LaunchAtLoginManaging
+    private let foundationModelAvailabilityProvider: FoundationModelAvailabilityProviding
+    private let skillMatcher = SkillMatcher()
     private var monitor: HotKeyMonitor?
     private var activeSessionId: UUID?
 
-    public init(pipeline: VoicePipeline, permissions: PermissionManaging, performanceSampler: PerformanceSampler) {
+    public init(
+        pipeline: VoicePipeline,
+        permissions: PermissionManaging,
+        performanceSampler: PerformanceSampler,
+        historyStore: HistoryStore? = nil,
+        skillStore: SkillStore? = nil,
+        settingsStore: AppSettingsStore? = nil,
+        launchAtLoginManager: LaunchAtLoginManaging? = nil,
+        foundationModelAvailabilityProvider: FoundationModelAvailabilityProviding = FoundationModelAvailabilityProbe()
+    ) {
         self.pipeline = pipeline
         self.permissions = permissions
         self.performanceSampler = performanceSampler
+        self.historyStore = historyStore ?? FileHistoryStore()
+        self.skillStore = skillStore ?? FileSkillStore()
+        self.settingsStore = settingsStore ?? FileAppSettingsStore()
+        self.launchAtLoginManager = launchAtLoginManager ?? UserDefaultsLaunchAtLoginManager()
+        self.foundationModelAvailabilityProvider = foundationModelAvailabilityProvider
         self.permissionSnapshot = permissions.currentPermissionSnapshot()
         self.showOnboarding = !permissionSnapshot.allGranted
         self.onboardingStep = showOnboarding ? 1 : 4
+        self.selectedModule = showOnboarding ? .welcome : .home
+        self.historyItems = self.historyStore.loadHistory()
+        self.skillSnapshot = self.skillStore.loadSkills()
+        self.appSettings = self.settingsStore.loadSettings()
+        self.menuBarSummary = historyItems.first?.outputText ?? ""
+        self.hotKeySettings.conflictMessage = ""
+        refreshFoundationModelAvailability()
         configureMonitor()
     }
 
@@ -78,9 +113,121 @@ public final class AppViewModel: ObservableObject {
         switchScene(to: .writing)
     }
 
+    public func selectModule(_ module: MainModule) {
+        if module == .skills && foundationModelAvailability == .deviceNotEligible {
+            return
+        }
+        selectedModule = module
+    }
+
+    public func reloadSkillSnapshot() {
+        skillSnapshot = skillStore.loadSkills()
+    }
+
+    @discardableResult
+    public func addCustomSkill(name: String, template: String, styleHint: String) -> String {
+        let id = UUID().uuidString.lowercased()
+        let profile = SkillProfile(
+            id: id,
+            name: name,
+            type: .custom,
+            template: template,
+            styleHint: styleHint
+        )
+        skillSnapshot.profiles.append(profile)
+        saveSkills()
+        return id
+    }
+
+    public func updateSkill(_ profile: SkillProfile) {
+        guard let idx = skillSnapshot.profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        skillSnapshot.profiles[idx] = profile
+        saveSkills()
+    }
+
+    @discardableResult
+    public func deleteSkill(_ skillId: String) -> Bool {
+        guard let idx = skillSnapshot.profiles.firstIndex(where: { $0.id == skillId }) else { return false }
+        if skillSnapshot.profiles[idx].type == .preinstalled {
+            return false
+        }
+        skillSnapshot.profiles.remove(at: idx)
+        let removedBundles = Set(skillSnapshot.matching.bundleSkillMap.filter { $0.value == skillId }.map { $0.key })
+        skillSnapshot.matching.bundleSkillMap = skillSnapshot.matching.bundleSkillMap.filter { $0.value != skillId }
+        for bundleId in removedBundles {
+            skillSnapshot.matching.bundleDisplayNameMap.removeValue(forKey: bundleId)
+        }
+        skillSnapshot.matching.categorySkillMap = skillSnapshot.matching.categorySkillMap.filter { $0.value != skillId }
+        if skillSnapshot.matching.defaultSkillId == skillId {
+            skillSnapshot.matching.defaultSkillId = "transcribe"
+        }
+        saveSkills()
+        return true
+    }
+
+    public func bindBundle(_ bundleId: String, skillId: String) {
+        skillSnapshot.matching.bundleSkillMap[bundleId] = skillId
+        saveSkills()
+    }
+
+    public func setBundleBindings(skillId: String, bindings: [AppBinding]) {
+        let staleBundles = skillSnapshot.matching.bundleSkillMap
+            .filter { $0.value == skillId }
+            .map(\.key)
+        for bundleId in staleBundles {
+            skillSnapshot.matching.bundleSkillMap.removeValue(forKey: bundleId)
+            skillSnapshot.matching.bundleDisplayNameMap.removeValue(forKey: bundleId)
+        }
+        for binding in bindings {
+            skillSnapshot.matching.bundleSkillMap[binding.bundleId] = skillId
+            skillSnapshot.matching.bundleDisplayNameMap[binding.bundleId] = binding.appName
+        }
+        saveSkills()
+    }
+
+    public func bindingsForSkill(_ skillId: String) -> [AppBinding] {
+        skillSnapshot.matching.bundleSkillMap
+            .filter { $0.value == skillId }
+            .map { bundleId, _ in
+                AppBinding(
+                    bundleId: bundleId,
+                    appName: skillSnapshot.matching.bundleDisplayNameMap[bundleId] ?? bundleId
+                )
+            }
+            .sorted { $0.appName.localizedStandardCompare($1.appName) == .orderedAscending }
+    }
+
+    public func bindCategory(_ category: AppCategory, skillId: String) {
+        skillSnapshot.matching.categorySkillMap[category] = skillId
+        saveSkills()
+    }
+
+    public func setDefaultSkill(_ skillId: String) {
+        skillSnapshot.matching.defaultSkillId = skillId
+        skillSnapshot.matching.categorySkillMap[.general] = skillId
+        saveSkills()
+    }
+
+    public func setLaunchAtLogin(_ enabled: Bool) {
+        appSettings.launchAtLoginEnabled = enabled
+        launchAtLoginManager.setEnabled(enabled)
+        saveSettings()
+    }
+
+    public func setMenuBarSummaryVisible(_ visible: Bool) {
+        appSettings.showRecentSummary = visible
+        if !visible {
+            menuBarSummary = ""
+        } else {
+            updateMenuBarSummary()
+        }
+        saveSettings()
+    }
+
     public func skipOnboarding() {
         onboardingStep = 4
         showOnboarding = false
+        selectedModule = .home
         startMonitor()
     }
 
@@ -122,6 +269,8 @@ public final class AppViewModel: ObservableObject {
         let conflict = hotKeySettings.checkForConflicts()
         hotKeySettings.hasConflict = conflict.hasConflict
         hotKeySettings.conflictMessage = conflict.message
+        appSettings.hotKeyDescription = config.displayString.isEmpty ? "Fn" : config.displayString
+        saveSettings()
     }
 
     private func updateOnboardingStep() {
@@ -134,6 +283,7 @@ public final class AppViewModel: ObservableObject {
         } else {
             onboardingStep = 4
             showOnboarding = false
+            selectedModule = .home
             startMonitor()
         }
     }
@@ -163,8 +313,8 @@ public final class AppViewModel: ObservableObject {
 
     private func handlePress() async {
         permissionSnapshot = permissions.currentPermissionSnapshot()
+        refreshFoundationModelAvailability()
         speechStatus = "待录音"
-        foundationModelStatus = "待处理"
         guard permissionSnapshot.allGranted else {
             stateText = "Failed"
             showOnboarding = true
@@ -192,7 +342,6 @@ public final class AppViewModel: ObservableObject {
                 recommendedSettingItem = nil
                 canRetry = false
                 speechStatus = "录音不可用"
-                foundationModelStatus = "待处理"
                 return
             }
             stateText = "Failed"
@@ -201,7 +350,6 @@ public final class AppViewModel: ObservableObject {
             recommendedSettingItem = .microphone
             canRetry = false
             speechStatus = "异常"
-            foundationModelStatus = "待处理"
         }
     }
 
@@ -213,8 +361,10 @@ public final class AppViewModel: ObservableObject {
             let result = try await pipeline.stopRecordingAndProcess(sessionId: activeSessionId)
             stateText = result.inject.success ? "Done" : "Failed"
             cleanedText = result.clean.cleanText
+            trialRunPassed = result.inject.success
+            cleanStyleTag = result.clean.styleTag
             speechStatus = result.transcript.success ? "正常（端侧）" : "异常"
-            foundationModelStatus = result.clean.usedFallback ? "降级（规则回退）" : "正常"
+            refreshFoundationModelAvailability()
             if result.clean.usedFallback {
                 lastError = "清洗模型不可用，已降级为仅转录"
                 actionTitle = ""
@@ -225,6 +375,8 @@ public final class AppViewModel: ObservableObject {
                 canRetry = !result.inject.success
             }
             recommendedSettingItem = nil
+            appendHistory(from: result)
+            updateMenuBarSummary()
             pipeline.resetToIdle()
             self.activeSessionId = nil
             recordMetricSummary()
@@ -235,7 +387,7 @@ public final class AppViewModel: ObservableObject {
                 actionTitle = ""
                 canRetry = false
                 speechStatus = "录音过短/不可用"
-                foundationModelStatus = "待处理"
+                refreshFoundationModelAvailability()
                 pipeline.resetToIdle()
                 self.activeSessionId = nil
                 return
@@ -251,6 +403,7 @@ public final class AppViewModel: ObservableObject {
             updateModelStatusForError(error)
             actionTitle = "重试本次"
             canRetry = true
+            refreshFoundationModelAvailability()
             pipeline.resetToIdle()
             self.activeSessionId = nil
         }
@@ -273,26 +426,98 @@ public final class AppViewModel: ObservableObject {
     private func updateModelStatusForError(_ error: Error) {
         guard let voxError = error as? VoxErrorCode else {
             speechStatus = "异常"
-            foundationModelStatus = "未知"
             return
         }
         switch voxError {
         case .permissionSpeechDenied, .transcriptionUnavailable:
             speechStatus = "异常"
-            foundationModelStatus = "待处理"
         case .retryExhausted, .timeout:
             speechStatus = "异常"
-            foundationModelStatus = "待处理"
         case .cleaningUnavailable:
             speechStatus = "正常"
-            foundationModelStatus = "异常"
         case .injectionFailed:
             speechStatus = "正常"
-            foundationModelStatus = "正常"
         default:
             speechStatus = "未知"
-            foundationModelStatus = "未知"
         }
+    }
+
+    private func refreshFoundationModelAvailability() {
+        let state = foundationModelAvailabilityProvider.foundationModelAvailability()
+        foundationModelAvailability = state
+        foundationModelStatus = foundationModelStatusText(state)
+        if state == .deviceNotEligible && selectedModule == .skills {
+            selectedModule = .home
+        }
+    }
+
+    private func foundationModelStatusText(_ state: FoundationModelAvailabilityState) -> String {
+        switch state {
+        case .available:
+            return "已就绪"
+        case .modelNotReady:
+            return "等待模型就绪"
+        case .appleIntelligenceNotEnabled:
+            return "请开启 Apple Intelligence"
+        case .deviceNotEligible:
+            return "设备不支持（终止）"
+        case .unavailable:
+            return "不可用（终止）"
+        }
+    }
+
+    private func appendHistory(from result: ProcessResult) {
+        let skillId = resolveSkillId(for: result.context)
+        let skillName = skillSnapshot.profiles.first(where: { $0.id == skillId })?.name ?? "默认技能"
+        let appName = appNameForBundleId(result.context.bundleId)
+        let item = TranscriptHistoryItem(
+            appName: appName,
+            bundleId: result.context.bundleId,
+            skillId: skillId,
+            skillName: skillName,
+            sourceText: result.transcript.text,
+            outputText: result.clean.cleanText,
+            succeeded: result.inject.success
+        )
+        historyItems.insert(item, at: 0)
+        if historyItems.count > appSettings.historyLimit {
+            historyItems = Array(historyItems.prefix(appSettings.historyLimit))
+        }
+        historyStore.saveHistory(historyItems)
+    }
+
+    private func resolveSkillId(for context: ContextInfo) -> String {
+        skillMatcher.resolveSkillId(
+            bundleId: context.bundleId,
+            category: context.appCategory,
+            matching: skillSnapshot.matching
+        )
+    }
+
+    private func appNameForBundleId(_ bundleId: String) -> String {
+        bundleId.split(separator: ".").last.map(String.init) ?? bundleId
+    }
+
+    private func updateMenuBarSummary() {
+        guard appSettings.showRecentSummary else {
+            menuBarSummary = ""
+            return
+        }
+        let text = historyItems.first?.outputText ?? ""
+        if text.count <= appSettings.summaryMaxLength {
+            menuBarSummary = text
+        } else {
+            let prefix = text.prefix(max(0, appSettings.summaryMaxLength))
+            menuBarSummary = "\(prefix)…"
+        }
+    }
+
+    private func saveSkills() {
+        skillStore.saveSkills(skillSnapshot)
+    }
+
+    private func saveSettings() {
+        settingsStore.saveSettings(appSettings)
     }
 }
 

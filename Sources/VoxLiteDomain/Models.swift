@@ -73,7 +73,7 @@ public struct ContextInfo: Equatable, Sendable {
     }
 }
 
-public enum AppCategory: String, Equatable, Sendable {
+public enum AppCategory: String, Codable, Hashable, Equatable, Sendable {
     case communication
     case development
     case writing

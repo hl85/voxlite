@@ -19,8 +19,9 @@ public protocol ContextResolving {
     func resolveContext() -> ContextInfo
 }
 
+@MainActor
 public protocol TextCleaning {
-    func cleanText(transcript: String, context: ContextInfo) -> CleanResult
+    func cleanText(transcript: String, context: ContextInfo) async -> CleanResult
 }
 
 public protocol TextInjecting {
@@ -45,4 +46,23 @@ public protocol LoggerServing {
 public protocol MetricsServing {
     func record(event: String, success: Bool, errorCode: VoxErrorCode?, latencyMs: Int)
     func percentile(_ event: String, _ value: Double) -> Int?
+}
+
+public protocol HistoryStore {
+    func loadHistory() -> [TranscriptHistoryItem]
+    func saveHistory(_ items: [TranscriptHistoryItem])
+}
+
+public protocol SkillStore {
+    func loadSkills() -> SkillConfigSnapshot
+    func saveSkills(_ snapshot: SkillConfigSnapshot)
+}
+
+public protocol AppSettingsStore {
+    func loadSettings() -> AppSettings
+    func saveSettings(_ settings: AppSettings)
+}
+
+public protocol LaunchAtLoginManaging {
+    func setEnabled(_ enabled: Bool)
 }

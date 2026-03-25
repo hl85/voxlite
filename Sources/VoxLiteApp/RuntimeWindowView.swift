@@ -92,7 +92,7 @@ private extension RuntimeWindowView {
                         .padding(.horizontal, 16)
                 }
                 Divider().opacity(0.15).padding(.horizontal, 16)
-                Button("退出 Vox") {
+                Button("退出") {
                     NSApplication.shared.terminate(nil)
                 }
                 .buttonStyle(VoxDestructiveButtonStyle())
