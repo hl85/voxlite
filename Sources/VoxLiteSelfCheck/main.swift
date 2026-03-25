@@ -27,6 +27,62 @@ func runStateMachineChecks() throws {
     try require(sm.transition(to: .injecting) == false, "idle -> injecting should be rejected")
 }
 
+func runHotKeyDisplayStringChecks() throws {
+    let fnOnly = HotKeyConfiguration.defaultConfiguration
+    try require(fnOnly.displayString == "Fn", "default Fn-only config should display 'Fn'")
+
+    let cmdOptS = HotKeyConfiguration(
+        keyCode: 1, // kVK_ANSI_S
+        modifiers: HotKeyConfiguration.commandModifierMask | HotKeyConfiguration.optionModifierMask
+    )
+    try require(cmdOptS.displayString == "⌥⌘S", "Cmd+Opt+S should display '⌥⌘S'")
+
+    let shiftCtrlA = HotKeyConfiguration(
+        keyCode: 0, // kVK_ANSI_A
+        modifiers: HotKeyConfiguration.shiftModifierMask | HotKeyConfiguration.controlModifierMask
+    )
+    try require(shiftCtrlA.displayString == "^⇧A", "Ctrl+Shift+A should display '^⇧A'")
+}
+
+func runCleaningModeCodecChecks() throws {
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
+    let data = try encoder.encode(CleaningMode.llmWithFallback)
+    let decoded = try decoder.decode(CleaningMode.self, from: data)
+    try require(decoded == .llmWithFallback, "cleaning mode should round-trip through JSON")
+}
+
+func runErrorDetailChecks() throws {
+    let detail = ErrorDetail(
+        summary: "识别超时",
+        detail: "长错误描述...",
+        errorCode: "TIMEOUT",
+        recommendedAction: .goToSettings(.speechRecognition)
+    )
+    try require(detail.summary == "识别超时", "error summary should be preserved")
+    try require(detail.detail == "长错误描述...", "error detail should be preserved")
+    try require(detail.errorCode == "TIMEOUT", "error code should be preserved")
+    try require(detail.recommendedAction == .goToSettings(.speechRecognition), "recommended action should be preserved")
+}
+
+func runAppSettingsOnboardingChecks() throws {
+    var settings = AppSettings(
+        hotKeyDescription: "Fn",
+        launchAtLoginEnabled: false,
+        menuBarDisplayMode: .iconAndSummary,
+        showRecentSummary: true,
+        summaryMaxLength: 48,
+        historyLimit: 50,
+        speechModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: ""),
+        llmModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: "")
+    )
+    try require(settings.onboardingCompleted == false, "onboarding should default to false")
+    settings.onboardingCompleted = true
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+    try require(decoded.onboardingCompleted, "onboarding flag should persist through JSON")
+}
+
 @MainActor
 func runCleanerChecks() async throws {
     let cleaner = RuleBasedTextCleaner(generator: StubPromptGenerator())
@@ -671,6 +727,10 @@ func runPrototypeMigrationChecks() async throws {
 Task {
     do {
         try runStateMachineChecks()
+        try runHotKeyDisplayStringChecks()
+        try runCleaningModeCodecChecks()
+        try runErrorDetailChecks()
+        try runAppSettingsOnboardingChecks()
         try await runCleanerChecks()
         try await runPromptToLLMInjectionChecks()
         try await runPipelineFallbackChecks()

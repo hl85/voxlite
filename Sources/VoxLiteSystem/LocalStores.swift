@@ -221,9 +221,10 @@ public final class FileAppSettingsStore: AppSettingsStore {
         menuBarDisplayMode: .iconAndSummary,
         showRecentSummary: true,
         summaryMaxLength: 48,
-        historyLimit: 50,
+        historyLimit: 100,
         speechModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: ""),
-        llmModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: "")
+        llmModel: ModelSetting(localEnabled: true, remoteProvider: "", remoteEndpoint: ""),
+        onboardingCompleted: false
     )
 }
 

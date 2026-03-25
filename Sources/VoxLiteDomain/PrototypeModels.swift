@@ -143,6 +143,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var historyLimit: Int
     public var speechModel: ModelSetting
     public var llmModel: ModelSetting
+    public var onboardingCompleted: Bool
 
     public init(
         hotKeyDescription: String,
@@ -152,7 +153,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         summaryMaxLength: Int,
         historyLimit: Int,
         speechModel: ModelSetting,
-        llmModel: ModelSetting
+        llmModel: ModelSetting,
+        onboardingCompleted: Bool = false
     ) {
         self.hotKeyDescription = hotKeyDescription
         self.launchAtLoginEnabled = launchAtLoginEnabled
@@ -162,5 +164,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.historyLimit = historyLimit
         self.speechModel = speechModel
         self.llmModel = llmModel
+        self.onboardingCompleted = onboardingCompleted
     }
 }
