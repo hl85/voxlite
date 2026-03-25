@@ -554,14 +554,71 @@ public enum VoxLiteFeatureBootstrap {
         let stateMachine = VoxStateMachine()
         let permissions = PermissionManager()
         let audio = AudioCaptureService(logger: logger)
+
+        let settings = FileAppSettingsStore.defaultSettings
         let transcriber: SpeechTranscribing
-        if #available(macOS 26.0, iOS 26.0, *) {
-            transcriber = OnDeviceSpeechTranscriber(logger: logger)
+        if settings.speechModel.useRemote,
+           settings.speechModel.provider.supportsSTT {
+            if let endpoint = settings.speechModel.effectiveEndpoint {
+                do {
+                    let apiKey = try KeychainStorage().retrieveAPIKey(for: settings.speechModel.provider)
+                    if let apiKey = apiKey {
+                        if #available(macOS 26.0, iOS 26.0, *) {
+                            let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
+                            let model = settings.speechModel.selectedSTTModel.isEmpty
+                                ? settings.speechModel.provider.sttModelPresets.first ?? "whisper-large-v3"
+                                : settings.speechModel.selectedSTTModel
+                            transcriber = RemoteSpeechTranscriber(client: client, model: model, logger: logger)
+                            logger.info("bootstrap using remote stt provider=\(settings.speechModel.provider.displayName) model=\(model)")
+                        } else {
+                            fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
+                        }
+                    } else {
+                        logger.warn("bootstrap stt api key not found for provider=\(settings.speechModel.provider.displayName), falling back to on-device")
+                        fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
+                    }
+                } catch {
+                    logger.warn("bootstrap stt keychain error=\(error.localizedDescription), falling back to on-device")
+                    fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
+                }
+            } else {
+                logger.warn("bootstrap stt no effective endpoint for provider=\(settings.speechModel.provider.displayName), falling back to on-device")
+                fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
+            }
         } else {
-            fatalError("OnDeviceSpeechTranscriber requires macOS 26+ / iOS 26+")
+            fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
         }
+
+        let generator: PromptGenerating
+        if settings.llmModel.useRemote {
+            if let endpoint = settings.llmModel.effectiveEndpoint {
+                do {
+                    let apiKey = try KeychainStorage().retrieveAPIKey(for: settings.llmModel.provider)
+                    if let apiKey = apiKey {
+                        let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
+                        let model = settings.llmModel.selectedLLMModel.isEmpty
+                            ? settings.llmModel.provider.llmModelPresets.first ?? "deepseek-chat"
+                            : settings.llmModel.selectedLLMModel
+                        generator = RemoteLLMGenerator(client: client, model: model, logger: logger)
+                        logger.info("bootstrap using remote llm provider=\(settings.llmModel.provider.displayName) model=\(model)")
+                    } else {
+                        logger.warn("bootstrap llm api key not found for provider=\(settings.llmModel.provider.displayName), falling back to foundation model")
+                        generator = FoundationModelPromptGenerator()
+                    }
+                } catch {
+                    logger.warn("bootstrap llm keychain error=\(error.localizedDescription), falling back to foundation model")
+                    generator = FoundationModelPromptGenerator()
+                }
+            } else {
+                logger.warn("bootstrap llm no effective endpoint for provider=\(settings.llmModel.provider.displayName), falling back to foundation model")
+                generator = FoundationModelPromptGenerator()
+            }
+        } else {
+            generator = FoundationModelPromptGenerator()
+        }
+
         let resolver = FrontmostContextResolver()
-        let cleaner = RuleBasedTextCleaner()
+        let cleaner = RuleBasedTextCleaner(generator: generator)
         let injector = ClipboardTextInjector(logger: logger)
         let performanceSampler = PerformanceSampler()
 

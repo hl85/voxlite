@@ -38,14 +38,12 @@ public final class AudioCaptureService: AudioCaptureServing {
         let id = UUID()
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("voxlite-\(id.uuidString)")
-            .appendingPathExtension("caf")
+            .appendingPathExtension("m4a")
         let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 16_000,
             AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
         let recorder = try AVAudioRecorder(url: tmp, settings: settings)
         recorder.isMeteringEnabled = true

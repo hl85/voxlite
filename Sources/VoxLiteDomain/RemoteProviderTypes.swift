@@ -19,10 +19,14 @@ public extension RemoteProvider {
 
     var defaultEndpoint: URL {
         switch self {
-        case .deepseek: URL(string: "https://api.deepseek.com/v1")!
-        case .groq: URL(string: "https://api.groq.com/openai/v1")!
-        case .siliconFlow: URL(string: "https://api.siliconflow.cn/v1")!
-        case .custom: URL(string: "https://example.com/v1")!
+        case .deepseek:
+            URL(string: "https://api.deepseek.com/v1") ?? URL(string: "about:blank")!
+        case .groq:
+            URL(string: "https://api.groq.com/openai/v1") ?? URL(string: "about:blank")!
+        case .siliconFlow:
+            URL(string: "https://api.siliconflow.cn/v1") ?? URL(string: "about:blank")!
+        case .custom:
+            URL(string: "https://example.com/v1") ?? URL(string: "about:blank")!
         }
     }
 

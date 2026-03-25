@@ -160,9 +160,14 @@ public final class OpenAIClient: Sendable {
         var body = Data()
         
         // Add model field
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(model)\r\n".data(using: .utf8)!)
+        guard let modelField = "--\(boundary)\r\n".data(using: .utf8),
+              let modelDisposition = "Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8),
+              let modelValue = "\(model)\r\n".data(using: .utf8) else {
+            throw OpenAIClientError.encodingError
+        }
+        body.append(modelField)
+        body.append(modelDisposition)
+        body.append(modelValue)
         
         // Add file field
         guard let audioData = try? Data(contentsOf: audioFileURL) else {
@@ -170,14 +175,23 @@ public final class OpenAIClient: Sendable {
         }
         
         let fileName = audioFileURL.lastPathComponent
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/\(audioFileURL.pathExtension)\r\n\r\n".data(using: .utf8)!)
+        guard let fileField = "--\(boundary)\r\n".data(using: .utf8),
+              let fileDisposition = "Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8),
+              let contentType = "Content-Type: audio/\(audioFileURL.pathExtension)\r\n\r\n".data(using: .utf8),
+              let newline = "\r\n".data(using: .utf8) else {
+            throw OpenAIClientError.encodingError
+        }
+        body.append(fileField)
+        body.append(fileDisposition)
+        body.append(contentType)
         body.append(audioData)
-        body.append("\r\n".data(using: .utf8)!)
+        body.append(newline)
         
         // Close boundary
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        guard let closeBoundary = "--\(boundary)--\r\n".data(using: .utf8) else {
+            throw OpenAIClientError.encodingError
+        }
+        body.append(closeBoundary)
         
         request.httpBody = body
         
