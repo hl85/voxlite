@@ -296,6 +296,7 @@ public struct HotKeyConfiguration: Codable, Equatable, Sendable {
         case kVK_RightArrow: return "→"
         case kVK_DownArrow: return "↓"
         case kVK_UpArrow: return "↑"
+        case kVK_Function: return "Fn"
         default: return nil
         }
     }

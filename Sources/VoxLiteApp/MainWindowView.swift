@@ -226,7 +226,7 @@ private extension MainWindowView {
             }
             sectionCard(title: "试运行") {
                 HStack {
-                    Text(model.trialRunPassed ? "试运行已通过" : "请按住 Fn 录音并松开完成试运行")
+                    Text(model.trialRunPassed ? "试运行已通过" : "请按住 \(model.hotKeySettings.configuration.displayString) 录音并松开完成试运行")
                         .font(.system(size: 13))
                         .foregroundStyle(palette.mutedText)
                     Spacer()
@@ -236,7 +236,7 @@ private extension MainWindowView {
                     .buttonStyle(VoxSecondaryButtonStyle())
                     Button("开始试运行") {
                         model.startMonitor()
-                        model.lastError = "请按住 Fn 说话，松开后完成一次真实试运行"
+                        model.lastError = "请按住 \(model.hotKeySettings.configuration.displayString) 说话，松开后完成一次真实试运行"
                     }
                     .buttonStyle(VoxPrimaryButtonStyle())
                     .disabled(!model.permissionSnapshot.allGranted)

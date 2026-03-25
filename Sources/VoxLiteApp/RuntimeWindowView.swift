@@ -168,7 +168,7 @@ private extension RuntimeWindowView {
                 Text("录音中…")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color(hex: "#f4f7ff"))
-                Text("松开 Fn 键即可结束录音")
+                Text("松开 \(model.hotKeySettings.configuration.displayString) 键即可结束录音")
                     .font(.system(size: 12))
                     .foregroundStyle(Color(hex: "#9cabd7"))
             }
