@@ -84,9 +84,12 @@ public final class VoicePipeline {
             throw VoxErrorCode.unknown
         }
 
+        let audioStopStart = Date()
         logger.debug("pipeline stage audio-stop begin")
         let audio = try audioCapture.stopRecording(sessionId: sessionId)
-        logger.debug("pipeline stage audio-stop done bytes=\(audio.count)")
+        let audioStopMs = Int(Date().timeIntervalSince(audioStopStart) * 1000)
+        logger.debug("pipeline stage audio-stop done bytes=\(audio.count) latency=\(audioStopMs)ms")
+        metrics.record(event: "pipeline.stage.audio-stop", success: true, errorCode: nil, latencyMs: audioStopMs)
         let context = contextResolver.resolveContext()
 
         let result = try await executeWithRetry(maxRetry: retryPolicy.maxRetries) {
@@ -111,12 +114,14 @@ public final class VoicePipeline {
                 latencyMs: transcription.latencyMs
             )
             logger.info("pipeline stage transcribe done success=true error=none latency=\(transcript.latencyMs)ms textLen=\(transcript.text.count)")
+            metrics.record(event: "pipeline.stage.transcribe", success: true, errorCode: nil, latencyMs: transcript.latencyMs)
             guard transcript.latencyMs <= retryPolicy.timeoutMs else {
                 throw VoxErrorCode.timeout
             }
 
             var clean = await cleaner.cleanText(transcript: transcript.text, context: context)
             logger.info("pipeline stage clean done success=\(clean.success) latency=\(clean.latencyMs)ms usedFallback=\(clean.usedFallback)")
+            metrics.record(event: "pipeline.stage.clean", success: clean.success, errorCode: clean.errorCode, latencyMs: clean.latencyMs)
             if clean.latencyMs > retryPolicy.timeoutMs || !clean.success {
                 clean = CleanResult(
                     cleanText: transcript.text,
@@ -140,6 +145,7 @@ public final class VoicePipeline {
             logger.debug("pipeline stage inject begin")
             let inject = injector.injectText(clean.cleanText)
             logger.info("pipeline stage inject done success=\(inject.success) error=\(inject.errorCode?.rawValue ?? "none") latency=\(inject.latencyMs)ms fallback=\(inject.usedClipboardFallback)")
+            metrics.record(event: "pipeline.stage.inject", success: inject.success, errorCode: inject.errorCode, latencyMs: inject.latencyMs)
             if !inject.success {
                 throw inject.errorCode ?? .injectionFailed
             }
@@ -158,7 +164,7 @@ public final class VoicePipeline {
         }
         _ = stateMachine.transition(to: .done)
         metrics.record(event: "pipeline.process", success: true, errorCode: nil, latencyMs: total)
-        logger.info("pipeline done session \(sessionId) success true")
+        logger.info("pipeline done session=\(sessionId) audio-stop=\(audioStopMs)ms transcribe=\(result.0.latencyMs)ms clean=\(result.2.latencyMs)ms inject=\(result.3.latencyMs)ms total=\(total)ms")
         return ProcessResult(
             sessionId: sessionId,
             transcript: result.0,
@@ -177,6 +183,18 @@ public final class VoicePipeline {
 
     public func percentileLatency(_ value: Double) -> Int? {
         metrics.percentile("pipeline.process", value)
+    }
+
+    public func percentileTranscribeLatency(_ value: Double) -> Int? {
+        metrics.percentile("pipeline.stage.transcribe", value)
+    }
+
+    public func percentileCleanLatency(_ value: Double) -> Int? {
+        metrics.percentile("pipeline.stage.clean", value)
+    }
+
+    public func percentileInjectLatency(_ value: Double) -> Int? {
+        metrics.percentile("pipeline.stage.inject", value)
     }
 
     private func executeWithRetry<T>(maxRetry: Int, operation: () async throws -> T) async throws -> T {

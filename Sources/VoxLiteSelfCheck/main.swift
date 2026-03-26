@@ -1014,6 +1014,16 @@ func runPerformanceThresholdChecks() async throws {
     let p95 = pipeline.percentileLatency(0.95) ?? Int.max
     try require(p50 < 1000, "P50 latency should be below 1000ms")
     try require(p95 < 1800, "P95 latency should be below 1800ms")
+
+    let transcribeP50 = pipeline.percentileTranscribeLatency(0.5)
+    let cleanP50 = pipeline.percentileCleanLatency(0.5)
+    let injectP50 = pipeline.percentileInjectLatency(0.5)
+    try require(transcribeP50 != nil, "transcribe stage should have recorded latency metrics")
+    try require(cleanP50 != nil, "clean stage should have recorded latency metrics")
+    try require(injectP50 != nil, "inject stage should have recorded latency metrics")
+    try require((transcribeP50 ?? Int.max) < 1000, "transcribe P50 should be below 1000ms")
+    try require((cleanP50 ?? Int.max) < 1000, "clean P50 should be below 1000ms")
+    try require((injectP50 ?? Int.max) < 500, "inject P50 should be below 500ms")
 }
 
 @MainActor
