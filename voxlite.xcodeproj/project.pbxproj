@@ -14,6 +14,7 @@
 		F200000021 /* RuntimeWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000022 /* RuntimeWindowView.swift */; };
 		F200000031 /* SharedComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000032 /* SharedComponents.swift */; };
 		F200000041 /* HotKeyCaptureInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000042 /* HotKeyCaptureInput.swift */; };
+		F200000051 /* ModelSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F200000052 /* ModelSettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +25,7 @@
 		F200000022 /* RuntimeWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeWindowView.swift; path = Sources/VoxLiteApp/RuntimeWindowView.swift; sourceTree = "<group>"; };
 		F200000032 /* SharedComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedComponents.swift; path = Sources/VoxLiteApp/SharedComponents.swift; sourceTree = "<group>"; };
 		F200000042 /* HotKeyCaptureInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HotKeyCaptureInput.swift; path = Sources/VoxLiteApp/HotKeyCaptureInput.swift; sourceTree = "<group>"; };
+		F200000052 /* ModelSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelSettingsView.swift; path = Sources/VoxLiteApp/ModelSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,6 +49,7 @@
 				F200000022 /* RuntimeWindowView.swift */,
 				F200000032 /* SharedComponents.swift */,
 				F200000042 /* HotKeyCaptureInput.swift */,
+				F200000052 /* ModelSettingsView.swift */,
 				D100000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -144,6 +147,7 @@
 				F200000021 /* RuntimeWindowView.swift in Sources */,
 				F200000031 /* SharedComponents.swift in Sources */,
 				F200000041 /* HotKeyCaptureInput.swift in Sources */,
+				F200000051 /* ModelSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
