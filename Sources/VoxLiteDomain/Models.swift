@@ -64,6 +64,7 @@ public struct RetryPolicy: Equatable, Sendable {
     }
 
     public static let m2Default = RetryPolicy(timeoutMs: 3_000, maxRetries: 1)
+    public static let remoteModelDefault = RetryPolicy(timeoutMs: 10_000, maxRetries: 1)
 }
 
 public struct ContextInfo: Equatable, Sendable {

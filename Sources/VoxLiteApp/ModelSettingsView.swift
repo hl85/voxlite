@@ -19,7 +19,8 @@ struct ModelSettingsView: View {
     @State private var apiKeys: [String: String] = [:]
     @State private var validationStatus: [String: ValidationState] = [:]
     @State private var isValidating: [String: Bool] = [:]
-    @State private var showRestartAlert = false
+    @State private var saveResultMessage: String = ""
+    @State private var showSaveResultAlert = false
     
     @State private var sttModelMemory: [String: String] = [:]
     @State private var llmModelMemory: [String: String] = [:]
@@ -37,7 +38,7 @@ struct ModelSettingsView: View {
                     settingRow("服务商") {
                         Picker("", selection: $sttProvider) {
                             Text(RemoteProvider.localOption).tag(RemoteProvider.localOption)
-                            ForEach(RemoteProvider.allCases, id: \.self) { provider in
+                            ForEach(RemoteProvider.sttSupportedProviders, id: \.rawValue) { provider in
                                 Text(provider.displayName).tag(provider.rawValue)
                             }
                         }
@@ -48,18 +49,10 @@ struct ModelSettingsView: View {
                             handleSTTProviderChange(newValue)
                         }
                     }
-                    
-                    if sttProvider != RemoteProvider.localOption {
-                        if let provider = RemoteProvider(rawValue: sttProvider) {
-                            if !provider.supportsSTT {
-                                Text("该服务商不支持语音识别")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(Color.red)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else {
-                                providerFields(for: provider, isSTT: true)
-                            }
-                        }
+
+                    if sttProvider != RemoteProvider.localOption,
+                       let provider = RemoteProvider(rawValue: sttProvider) {
+                        providerFields(for: provider, isSTT: true)
                     }
                 }
             }
@@ -100,10 +93,10 @@ struct ModelSettingsView: View {
         .onAppear {
             loadConfiguration()
         }
-        .alert("配置已保存", isPresented: $showRestartAlert) {
+        .alert("配置已保存", isPresented: $showSaveResultAlert) {
             Button("确定", role: .cancel) { }
         } message: {
-            Text("请重启应用以应用新配置")
+            Text(saveResultMessage)
         }
     }
     
@@ -194,7 +187,7 @@ struct ModelSettingsView: View {
         }
         
         let sttSetting = model.appSettings.speechModel
-        if sttSetting.useRemote {
+        if sttSetting.useRemote, sttSetting.provider.supportsSTT {
             sttProvider = sttSetting.provider.rawValue
             sttEndpoint = sttSetting.customEndpoint
             sttModelName = sttSetting.selectedSTTModel
@@ -309,9 +302,11 @@ struct ModelSettingsView: View {
         
         model.appSettings.speechModel = sttSetting
         model.appSettings.llmModel = llmSetting
-        model.saveRemoteModelSettings()
-        
-        showRestartAlert = true
+        let switched = model.saveRemoteModelSettings()
+        saveResultMessage = switched
+            ? "新配置已立即生效，首页、技能页和后续加工链路已刷新。"
+            : "配置已保存，但当前正在处理语音；本轮结束后请再次保存或重新进入设置确认状态。"
+        showSaveResultAlert = true
     }
 }
 
