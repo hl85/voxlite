@@ -79,4 +79,9 @@ public extension RemoteProvider {
     static var localOption: String {
         "本地模型"
     }
+
+    /// 仅返回支持 STT 的供应商（排除 Deepseek 等仅 LLM 供应商）
+    static var sttSupportedProviders: [RemoteProvider] {
+        allCases.filter { $0.supportsSTT }
+    }
 }

@@ -37,7 +37,7 @@ struct ModelSettingsView: View {
                     settingRow("服务商") {
                         Picker("", selection: $sttProvider) {
                             Text(RemoteProvider.localOption).tag(RemoteProvider.localOption)
-                            ForEach(RemoteProvider.allCases, id: \.self) { provider in
+                            ForEach(RemoteProvider.sttSupportedProviders, id: \.rawValue) { provider in
                                 Text(provider.displayName).tag(provider.rawValue)
                             }
                         }
@@ -48,18 +48,10 @@ struct ModelSettingsView: View {
                             handleSTTProviderChange(newValue)
                         }
                     }
-                    
-                    if sttProvider != RemoteProvider.localOption {
-                        if let provider = RemoteProvider(rawValue: sttProvider) {
-                            if !provider.supportsSTT {
-                                Text("该服务商不支持语音识别")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(Color.red)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else {
-                                providerFields(for: provider, isSTT: true)
-                            }
-                        }
+
+                    if sttProvider != RemoteProvider.localOption,
+                       let provider = RemoteProvider(rawValue: sttProvider) {
+                        providerFields(for: provider, isSTT: true)
                     }
                 }
             }
@@ -194,7 +186,7 @@ struct ModelSettingsView: View {
         }
         
         let sttSetting = model.appSettings.speechModel
-        if sttSetting.useRemote {
+        if sttSetting.useRemote, sttSetting.provider.supportsSTT {
             sttProvider = sttSetting.provider.rawValue
             sttEndpoint = sttSetting.customEndpoint
             sttModelName = sttSetting.selectedSTTModel
