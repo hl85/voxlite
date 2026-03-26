@@ -187,6 +187,15 @@ struct StubTranscriberTimeout: SpeechTranscribing {
     }
 }
 
+struct StubTranscriberWithLatency: SpeechTranscribing {
+    let latencyMs: Int
+    let text: String
+
+    func transcribe(audioFileURL: URL, elapsedMs: Int?) async throws -> SpeechTranscription {
+        SpeechTranscription(text: text, latencyMs: latencyMs, usedOnDevice: false)
+    }
+}
+
 struct StubContextResolver: ContextResolving {
     func resolveContext() -> ContextInfo {
         ContextInfo(bundleId: "com.test", appCategory: .communication, inputRole: "textField", locale: "zh_CN")
@@ -217,6 +226,22 @@ struct StubCleanerSuccess: TextCleaning {
             success: true,
             errorCode: nil,
             latencyMs: 5
+        )
+    }
+}
+
+struct StubCleanerSlowSuccess: TextCleaning {
+    let latencyMs: Int
+
+    func cleanText(transcript: String, context: ContextInfo) async -> CleanResult {
+        CleanResult(
+            cleanText: "远端加工：\(transcript)",
+            confidence: 0.92,
+            styleTag: "远端清洗",
+            usedFallback: false,
+            success: true,
+            errorCode: nil,
+            latencyMs: latencyMs
         )
     }
 }
@@ -272,6 +297,16 @@ final class CapturingPromptGenerator: PromptGenerating {
     func generateText(from prompt: String) async throws -> String {
         prompts.append(prompt)
         return output
+    }
+
+    func availabilityState() -> FoundationModelAvailabilityState {
+        .available
+    }
+}
+
+struct FailingPromptGenerator: PromptGenerating {
+    func generateText(from prompt: String) async throws -> String {
+        throw PromptGenerationError.unavailable
     }
 
     func availabilityState() -> FoundationModelAvailabilityState {
@@ -340,6 +375,26 @@ final class InMemorySettingsStore: AppSettingsStore {
     }
     func loadSettings() -> AppSettings { settings }
     func saveSettings(_ settings: AppSettings) { self.settings = settings }
+}
+
+final class InMemoryKeychainStore: KeychainStoring, @unchecked Sendable {
+    private var values: [String: String]
+
+    init(values: [String: String] = [:]) {
+        self.values = values
+    }
+
+    func store(_ value: String, forKey key: String) throws {
+        values[key] = value
+    }
+
+    func retrieve(forKey key: String) throws -> String? {
+        values[key]
+    }
+
+    func delete(forKey key: String) throws {
+        values.removeValue(forKey: key)
+    }
 }
 
 final class StubLaunchAtLoginManager: LaunchAtLoginManaging {
@@ -447,6 +502,128 @@ func runPromptToLLMInjectionChecks() async throws {
 }
 
 @MainActor
+func runBootstrapRemoteRuntimeChecks() throws {
+    var settings = FileAppSettingsStore.defaultSettings
+    settings.onboardingCompleted = true
+    settings.llmModel = ModelSetting(
+        useRemote: true,
+        provider: .deepseek,
+        customEndpoint: "",
+        selectedSTTModel: "",
+        selectedLLMModel: "deepseek-chat"
+    )
+
+    let settingsStore = InMemorySettingsStore(settings: settings)
+    let keychain = InMemoryKeychainStore(values: [RemoteProvider.deepseek.rawValue: "deepseek-test-key"])
+    let skillStore = InMemorySkillStore()
+    let historyStore = InMemoryHistoryStore()
+
+    let vm = VoxLiteFeatureBootstrap.makeDefaultViewModel(
+        historyStore: historyStore,
+        skillStore: skillStore,
+        settingsStore: settingsStore,
+        launchAtLoginManager: StubLaunchAtLoginManager(),
+        keychain: keychain,
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler()
+    )
+
+    try require(vm.llmModelName == "Deepseek 深度求索 (deepseek-chat)", "bootstrap should use persisted remote llm settings for runtime model name")
+    try require(vm.foundationModelAvailability == .available, "runtime availability should come from active cleaner/generator chain")
+    try require(vm.foundationModelStatus == "已就绪", "runtime status should reflect active remote generator availability")
+}
+
+@MainActor
+func runHotSwitchRuntimeChecks() throws {
+    let skillStore = InMemorySkillStore()
+    let historyStore = InMemoryHistoryStore()
+    let keychain = InMemoryKeychainStore(values: [RemoteProvider.deepseek.rawValue: "deepseek-test-key"])
+    var initialSettings = FileAppSettingsStore.defaultSettings
+    initialSettings.onboardingCompleted = true
+    let settingsStore = InMemorySettingsStore(settings: initialSettings)
+
+    let vm = VoxLiteFeatureBootstrap.makeDefaultViewModel(
+        historyStore: historyStore,
+        skillStore: skillStore,
+        settingsStore: settingsStore,
+        launchAtLoginManager: StubLaunchAtLoginManager(),
+        keychain: keychain,
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler()
+    )
+
+    try require(vm.llmModelName == "Apple Foundation Model", "default runtime should start with local llm")
+
+    vm.appSettings.llmModel = ModelSetting(
+        useRemote: true,
+        provider: .deepseek,
+        customEndpoint: "",
+        selectedSTTModel: "",
+        selectedLLMModel: "deepseek-chat"
+    )
+
+    let switched = vm.saveRemoteModelSettings()
+    try require(switched, "idle runtime should hot-switch successfully after saving settings")
+    try require(vm.llmModelName == "Deepseek 深度求索 (deepseek-chat)", "hot-switch should refresh active llm model name immediately")
+    try require(vm.foundationModelAvailability == .available, "hot-switch should refresh active availability immediately")
+    try require(vm.foundationModelStatus == "已就绪", "hot-switch should refresh active model status immediately")
+}
+
+@MainActor
+func runFallbackMessageChecks() async throws {
+    let settingsStore = InMemorySettingsStore(settings: FileAppSettingsStore.defaultSettings)
+    let fallbackOnlyTranscriptPipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: StubTranscriber(),
+        contextResolver: StubContextResolver(),
+        cleaner: StubCleanerFail(),
+        injector: StubInjector(),
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics()
+    )
+    let transcriptFallbackVM = AppViewModel(
+        pipeline: fallbackOnlyTranscriptPipeline,
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler(),
+        settingsStore: settingsStore
+    )
+    transcriptFallbackVM.skipOnboarding()
+    await transcriptFallbackVM.simulatePressForTesting()
+    await transcriptFallbackVM.simulateReleaseForTesting()
+    try require(transcriptFallbackVM.lastError == "清洗模型不可用，已降级为仅转录", "pipeline fallback-to-transcript should keep transcript fallback message")
+
+    let profileFallbackCleaner = RuleBasedTextCleaner(
+        skillStore: InMemorySkillStore(),
+        matcher: SkillMatcher(),
+        generator: FailingPromptGenerator()
+    )
+    let profileFallbackPipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: StubTranscriber(),
+        contextResolver: StubContextResolver(),
+        cleaner: profileFallbackCleaner,
+        injector: StubInjector(),
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics()
+    )
+    let profileFallbackVM = AppViewModel(
+        pipeline: profileFallbackPipeline,
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler(),
+        skillStore: InMemorySkillStore(),
+        settingsStore: settingsStore
+    )
+    profileFallbackVM.skipOnboarding()
+    await profileFallbackVM.simulatePressForTesting()
+    await profileFallbackVM.simulateReleaseForTesting()
+    try require(profileFallbackVM.lastError == "清洗模型不可用，已降级为规则清洗", "skill fallback should describe rule-based cleaning instead of transcript-only")
+}
+
+@MainActor
 func runPermissionErrorChecks() async throws {
     let pipeline = VoicePipeline(
         stateMachine: StubStateStore(),
@@ -526,6 +703,64 @@ func runTimeoutChecks() async throws {
         try require(false, "timeout pipeline should throw timeout")
     } catch let error as VoxErrorCode {
         try require(error == .timeout, "timeout in stage should report timeout")
+    }
+}
+
+@MainActor
+func runRemoteTimeoutBudgetChecks() async throws {
+    let remoteCleanPipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: StubTranscriber(),
+        contextResolver: StubContextResolver(),
+        cleaner: StubCleanerSlowSuccess(latencyMs: 6_800),
+        injector: StubInjector(),
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics(),
+        retryPolicy: .remoteModelDefault
+    )
+    let remoteSession = try remoteCleanPipeline.startRecording()
+    let remoteResult = try await remoteCleanPipeline.stopRecordingAndProcess(sessionId: remoteSession)
+    try require(remoteResult.clean.cleanText == "远端加工：原始转写文本", "remote policy should keep successful slow clean result")
+    try require(remoteResult.clean.usedFallback == false, "remote policy should avoid false transcript fallback for successful clean")
+    try require(remoteResult.clean.latencyMs > 3000, "remote policy regression should prove clean latency exceeds old local budget")
+
+    let remoteTimeoutPipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: StubTranscriber(),
+        contextResolver: StubContextResolver(),
+        cleaner: StubCleanerSlowSuccess(latencyMs: 10_500),
+        injector: StubInjector(),
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics(),
+        retryPolicy: .remoteModelDefault
+    )
+    let cleanFallbackSession = try remoteTimeoutPipeline.startRecording()
+    let fallbackResult = try await remoteTimeoutPipeline.stopRecordingAndProcess(sessionId: cleanFallbackSession)
+    try require(fallbackResult.clean.usedFallback, "remote policy should still fallback when clean exceeds remote budget")
+    try require(fallbackResult.clean.cleanText == "原始转写文本", "over-budget remote clean should fallback to transcript")
+
+    let remoteTranscribeTimeoutPipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: StubTranscriberWithLatency(latencyMs: 10_500, text: "远端转写"),
+        contextResolver: StubContextResolver(),
+        cleaner: StubCleanerSuccess(),
+        injector: StubInjector(),
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics(),
+        retryPolicy: .remoteModelDefault
+    )
+    let timeoutSession = try remoteTranscribeTimeoutPipeline.startRecording()
+    do {
+        _ = try await remoteTranscribeTimeoutPipeline.stopRecordingAndProcess(sessionId: timeoutSession)
+        try require(false, "remote policy should still timeout when transcribe exceeds remote budget")
+    } catch let error as VoxErrorCode {
+        try require(error == .timeout, "remote policy should preserve hard timeout for truly slow remote transcribe")
     }
 }
 
@@ -872,10 +1107,14 @@ Task {
         try runAppSettingsOnboardingChecks()
         try await runCleanerChecks()
         try await runPromptToLLMInjectionChecks()
+        try runBootstrapRemoteRuntimeChecks()
+        try runHotSwitchRuntimeChecks()
+        try await runFallbackMessageChecks()
         try await runPipelineFallbackChecks()
         try await runPermissionErrorChecks()
         try await runRetryChecks()
         try await runTimeoutChecks()
+        try await runRemoteTimeoutBudgetChecks()
         try runFnMonitorChecks()
         try runClipboardInjectorChecks()
         try runSelectedModuleRegressionChecks()

@@ -27,6 +27,8 @@ public final class AppViewModel: ObservableObject {
     @Published public var speechStatus: String = "未知"
     @Published public var foundationModelStatus: String = "未知"
     @Published public var foundationModelAvailability: FoundationModelAvailabilityState = .unavailable
+    @Published public var sttModelName: String = ""
+    @Published public var llmModelName: String = ""
     @Published public var cleanStyleTag: String = "未处理"
     @Published public var selectedModule: MainModule = .welcome
     @Published public var historyItems: [TranscriptHistoryItem] = []
@@ -35,14 +37,15 @@ public final class AppViewModel: ObservableObject {
     @Published public var menuBarSummary: String = ""
     @Published public var trialRunPassed: Bool = false
 
-    private let pipeline: VoicePipeline
+    private var pipeline: VoicePipeline
     private let permissions: PermissionManaging
     private let performanceSampler: PerformanceSampler
     private let historyStore: HistoryStore
     private let skillStore: SkillStore
     private let settingsStore: AppSettingsStore
     private let launchAtLoginManager: LaunchAtLoginManaging
-    private let foundationModelAvailabilityProvider: FoundationModelAvailabilityProviding
+    private var foundationModelAvailabilityProvider: any FoundationModelAvailabilityProviding
+    private let runtimeChainReloader: (() -> (pipeline: VoicePipeline, availabilityProvider: any FoundationModelAvailabilityProviding))?
     private let skillMatcher = SkillMatcher()
     private var monitor: HotKeyMonitor?
     private var activeSessionId: UUID?
@@ -55,7 +58,8 @@ public final class AppViewModel: ObservableObject {
         skillStore: SkillStore? = nil,
         settingsStore: AppSettingsStore? = nil,
         launchAtLoginManager: LaunchAtLoginManaging? = nil,
-        foundationModelAvailabilityProvider: FoundationModelAvailabilityProviding = FoundationModelAvailabilityProbe()
+        foundationModelAvailabilityProvider: any FoundationModelAvailabilityProviding = FoundationModelAvailabilityProbe(),
+        runtimeChainReloader: (() -> (pipeline: VoicePipeline, availabilityProvider: any FoundationModelAvailabilityProviding))? = nil
     ) {
         self.pipeline = pipeline
         self.permissions = permissions
@@ -65,6 +69,7 @@ public final class AppViewModel: ObservableObject {
         self.settingsStore = settingsStore ?? FileAppSettingsStore()
         self.launchAtLoginManager = launchAtLoginManager ?? UserDefaultsLaunchAtLoginManager()
         self.foundationModelAvailabilityProvider = foundationModelAvailabilityProvider
+        self.runtimeChainReloader = runtimeChainReloader
         self.permissionSnapshot = permissions.currentPermissionSnapshot()
         let settings = self.settingsStore.loadSettings()
         self.appSettings = settings
@@ -77,6 +82,7 @@ public final class AppViewModel: ObservableObject {
         self.menuBarSummary = historyItems.first?.outputText ?? ""
         self.hotKeySettings.conflictMessage = ""
         refreshFoundationModelAvailability()
+        refreshModelNames()
         configureMonitor()
     }
 
@@ -250,8 +256,27 @@ public final class AppViewModel: ObservableObject {
         permissions.openSystemSettings(for: item)
     }
 
-    public func saveRemoteModelSettings() {
+    @discardableResult
+    public func saveRemoteModelSettings() -> Bool {
         saveSettings()
+        guard activeSessionId == nil else {
+            lastError = "当前正在处理语音，配置已保存，将在本轮结束后生效"
+            return false
+        }
+        guard let runtimeChainReloader else {
+            refreshModelNames()
+            refreshFoundationModelAvailability()
+            reloadSkillSnapshot()
+            return true
+        }
+        let runtimeChain = runtimeChainReloader()
+        pipeline = runtimeChain.pipeline
+        foundationModelAvailabilityProvider = runtimeChain.availabilityProvider
+        appSettings = settingsStore.loadSettings()
+        refreshModelNames()
+        refreshFoundationModelAvailability()
+        reloadSkillSnapshot()
+        return true
     }
 
     public func resetOnboarding() {
@@ -394,7 +419,7 @@ public final class AppViewModel: ObservableObject {
                 updateOnboardingStep()
             }
             if result.clean.usedFallback {
-                lastError = "清洗模型不可用，已降级为仅转录"
+                lastError = fallbackMessage(for: result.clean)
                 actionTitle = ""
                 canRetry = false
             } else {
@@ -476,6 +501,35 @@ public final class AppViewModel: ObservableObject {
         foundationModelStatus = foundationModelStatusText(state)
     }
 
+    private func refreshModelNames() {
+        let sttSetting = appSettings.speechModel
+        if sttSetting.useRemote, sttSetting.provider.supportsSTT {
+            let model = sttSetting.selectedSTTModel.isEmpty
+                ? sttSetting.provider.sttModelPresets.first ?? "whisper-large-v3"
+                : sttSetting.selectedSTTModel
+            sttModelName = "\(sttSetting.provider.displayName) (\(model))"
+        } else {
+            sttModelName = "端侧语音识别"
+        }
+        
+        let llmSetting = appSettings.llmModel
+        if llmSetting.useRemote {
+            let model = llmSetting.selectedLLMModel.isEmpty
+                ? llmSetting.provider.llmModelPresets.first ?? "deepseek-chat"
+                : llmSetting.selectedLLMModel
+            llmModelName = "\(llmSetting.provider.displayName) (\(model))"
+        } else {
+            llmModelName = "Apple Foundation Model"
+        }
+    }
+
+    private func fallbackMessage(for result: CleanResult) -> String {
+        if result.styleTag == "仅转录" {
+            return "清洗模型不可用，已降级为仅转录"
+        }
+        return "清洗模型不可用，已降级为规则清洗"
+    }
+
     private func foundationModelStatusText(_ state: FoundationModelAvailabilityState) -> String {
         switch state {
         case .available:
@@ -545,30 +599,36 @@ public final class AppViewModel: ObservableObject {
         settingsStore.saveSettings(appSettings)
     }
 }
-
 public enum VoxLiteFeatureBootstrap {
     @MainActor
-    public static func makeDefaultViewModel() -> AppViewModel {
-        let logger = ConsoleLogger()
-        let metrics = InMemoryMetrics()
+    private static func buildRuntimeChain(
+        settingsStore: AppSettingsStore,
+        skillStore: SkillStore,
+        keychain: KeychainStoring,
+        permissions: PermissionManaging,
+        logger: LoggerServing,
+        metrics: MetricsServing
+    ) -> (pipeline: VoicePipeline, availabilityProvider: any FoundationModelAvailabilityProviding) {
+        let settings = settingsStore.loadSettings()
         let stateMachine = VoxStateMachine()
-        let permissions = PermissionManager()
         let audio = AudioCaptureService(logger: logger)
+        var usesRemoteSTT = false
+        var usesRemoteLLM = false
 
-        let settings = FileAppSettingsStore.defaultSettings
         let transcriber: SpeechTranscribing
         if #available(macOS 26.0, iOS 26.0, *) {
             if settings.speechModel.useRemote,
                settings.speechModel.provider.supportsSTT,
                let endpoint = settings.speechModel.effectiveEndpoint {
                 do {
-                    let apiKey = try KeychainStorage().retrieveAPIKey(for: settings.speechModel.provider)
+                    let apiKey = try keychain.retrieve(forKey: settings.speechModel.provider.rawValue)
                     if let apiKey = apiKey {
                         let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
                         let model = settings.speechModel.selectedSTTModel.isEmpty
                             ? settings.speechModel.provider.sttModelPresets.first ?? "whisper-large-v3"
                             : settings.speechModel.selectedSTTModel
                         transcriber = RemoteSpeechTranscriber(client: client, model: model, logger: logger)
+                        usesRemoteSTT = true
                         logger.info("bootstrap using remote stt provider=\(settings.speechModel.provider.displayName) model=\(model)")
                     } else {
                         logger.warn("bootstrap stt api key not found for provider=\(settings.speechModel.provider.displayName), falling back to on-device")
@@ -589,13 +649,14 @@ public enum VoxLiteFeatureBootstrap {
         if settings.llmModel.useRemote {
             if let endpoint = settings.llmModel.effectiveEndpoint {
                 do {
-                    let apiKey = try KeychainStorage().retrieveAPIKey(for: settings.llmModel.provider)
+                    let apiKey = try keychain.retrieve(forKey: settings.llmModel.provider.rawValue)
                     if let apiKey = apiKey {
                         let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
                         let model = settings.llmModel.selectedLLMModel.isEmpty
                             ? settings.llmModel.provider.llmModelPresets.first ?? "deepseek-chat"
                             : settings.llmModel.selectedLLMModel
                         generator = RemoteLLMGenerator(client: client, model: model, logger: logger)
+                        usesRemoteLLM = true
                         logger.info("bootstrap using remote llm provider=\(settings.llmModel.provider.displayName) model=\(model)")
                     } else {
                         logger.warn("bootstrap llm api key not found for provider=\(settings.llmModel.provider.displayName), falling back to foundation model")
@@ -614,10 +675,9 @@ public enum VoxLiteFeatureBootstrap {
         }
 
         let resolver = FrontmostContextResolver()
-        let cleaner = RuleBasedTextCleaner(generator: generator)
+        let cleaner = RuleBasedTextCleaner(skillStore: skillStore, matcher: SkillMatcher(), generator: generator)
         let injector = ClipboardTextInjector(logger: logger)
-        let performanceSampler = PerformanceSampler()
-
+        let retryPolicy = (usesRemoteSTT || usesRemoteLLM) ? RetryPolicy.remoteModelDefault : .m2Default
         let pipeline = VoicePipeline(
             stateMachine: stateMachine,
             audioCapture: audio,
@@ -627,13 +687,52 @@ public enum VoxLiteFeatureBootstrap {
             injector: injector,
             permissions: permissions,
             logger: logger,
+            metrics: metrics,
+            retryPolicy: retryPolicy
+        )
+        return (pipeline, cleaner)
+    }
+
+    @MainActor
+    public static func makeDefaultViewModel(
+        historyStore: HistoryStore = FileHistoryStore(),
+        skillStore: SkillStore = FileSkillStore(),
+        settingsStore: AppSettingsStore = FileAppSettingsStore(),
+        launchAtLoginManager: LaunchAtLoginManaging = UserDefaultsLaunchAtLoginManager(),
+        keychain: KeychainStoring = KeychainStorage(),
+        permissions: PermissionManaging = PermissionManager(),
+        performanceSampler: PerformanceSampler = PerformanceSampler()
+    ) -> AppViewModel {
+        let logger = ConsoleLogger()
+        let metrics = InMemoryMetrics()
+        let runtimeChain = buildRuntimeChain(
+            settingsStore: settingsStore,
+            skillStore: skillStore,
+            keychain: keychain,
+            permissions: permissions,
+            logger: logger,
             metrics: metrics
         )
 
         let viewModel = AppViewModel(
-            pipeline: pipeline,
+            pipeline: runtimeChain.pipeline,
             permissions: permissions,
-            performanceSampler: performanceSampler
+            performanceSampler: performanceSampler,
+            historyStore: historyStore,
+            skillStore: skillStore,
+            settingsStore: settingsStore,
+            launchAtLoginManager: launchAtLoginManager,
+            foundationModelAvailabilityProvider: runtimeChain.availabilityProvider,
+            runtimeChainReloader: {
+                buildRuntimeChain(
+                    settingsStore: settingsStore,
+                    skillStore: skillStore,
+                    keychain: keychain,
+                    permissions: permissions,
+                    logger: logger,
+                    metrics: metrics
+                )
+            }
         )
         return viewModel
     }
