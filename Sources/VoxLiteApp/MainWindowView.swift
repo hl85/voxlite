@@ -323,8 +323,8 @@ private extension MainWindowView {
         VStack(alignment: .leading, spacing: 12) {
             sectionCard(title: "运行状态") {
                 VStack(spacing: 8) {
-                    statusItemRow("Speech", model.speechStatus)
-                    statusItemRow("Foundation Model", model.foundationModelStatus)
+                    statusItemRow("语音识别模型 (STT)", model.sttModelName)
+                    statusItemRow("LLM 模型", model.llmModelName)
                     statusItemRow("清洗策略", model.cleanStyleTag)
                     errorDisplayRow()
                 }
@@ -346,11 +346,10 @@ private extension MainWindowView {
     }
 
     var skillsModule: some View {
-        let modelUnavailable = model.foundationModelAvailability == .deviceNotEligible
-            || model.foundationModelAvailability == .unavailable
+        let modelUnavailable = model.foundationModelAvailability != .available
         return VStack(alignment: .leading, spacing: 12) {
             if modelUnavailable {
-                infoBanner("模型暂不可用，部分功能受限。请前往「设置 → 模型设置」配置远端模型。") {
+                infoBanner("当前运行中的清洗模型暂不可用，技能仍可编辑；如已修改模型配置，请重启应用后再验证链路。") {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         model.selectModule(.settings)
                     }
@@ -365,8 +364,6 @@ private extension MainWindowView {
                     startAddSkillEditor()
                 }
                 .buttonStyle(VoxPrimaryButtonStyle())
-                .disabled(modelUnavailable)
-                .opacity(modelUnavailable ? 0.55 : 1)
             }
             ForEach(model.skillSnapshot.profiles) { skill in
                 sectionCard(title: "") {
@@ -390,7 +387,6 @@ private extension MainWindowView {
                                 startEditSkillEditor(skill)
                             }
                             .buttonStyle(VoxSecondaryButtonStyle())
-                            .disabled(modelUnavailable)
                             Button("删除") {
                                 _ = model.deleteSkill(skill.id)
                             }

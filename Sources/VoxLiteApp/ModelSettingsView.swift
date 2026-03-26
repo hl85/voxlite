@@ -19,7 +19,8 @@ struct ModelSettingsView: View {
     @State private var apiKeys: [String: String] = [:]
     @State private var validationStatus: [String: ValidationState] = [:]
     @State private var isValidating: [String: Bool] = [:]
-    @State private var showRestartAlert = false
+    @State private var saveResultMessage: String = ""
+    @State private var showSaveResultAlert = false
     
     @State private var sttModelMemory: [String: String] = [:]
     @State private var llmModelMemory: [String: String] = [:]
@@ -92,10 +93,10 @@ struct ModelSettingsView: View {
         .onAppear {
             loadConfiguration()
         }
-        .alert("配置已保存", isPresented: $showRestartAlert) {
+        .alert("配置已保存", isPresented: $showSaveResultAlert) {
             Button("确定", role: .cancel) { }
         } message: {
-            Text("请重启应用以应用新配置")
+            Text(saveResultMessage)
         }
     }
     
@@ -301,9 +302,11 @@ struct ModelSettingsView: View {
         
         model.appSettings.speechModel = sttSetting
         model.appSettings.llmModel = llmSetting
-        model.saveRemoteModelSettings()
-        
-        showRestartAlert = true
+        let switched = model.saveRemoteModelSettings()
+        saveResultMessage = switched
+            ? "新配置已立即生效，首页、技能页和后续加工链路已刷新。"
+            : "配置已保存，但当前正在处理语音；本轮结束后请再次保存或重新进入设置确认状态。"
+        showSaveResultAlert = true
     }
 }
 
