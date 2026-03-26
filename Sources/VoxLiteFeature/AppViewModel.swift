@@ -557,33 +557,29 @@ public enum VoxLiteFeatureBootstrap {
 
         let settings = FileAppSettingsStore.defaultSettings
         let transcriber: SpeechTranscribing
-        if settings.speechModel.useRemote,
-           settings.speechModel.provider.supportsSTT {
-            if let endpoint = settings.speechModel.effectiveEndpoint {
+        if #available(macOS 26.0, iOS 26.0, *) {
+            if settings.speechModel.useRemote,
+               settings.speechModel.provider.supportsSTT,
+               let endpoint = settings.speechModel.effectiveEndpoint {
                 do {
                     let apiKey = try KeychainStorage().retrieveAPIKey(for: settings.speechModel.provider)
                     if let apiKey = apiKey {
-                        if #available(macOS 26.0, iOS 26.0, *) {
-                            let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
-                            let model = settings.speechModel.selectedSTTModel.isEmpty
-                                ? settings.speechModel.provider.sttModelPresets.first ?? "whisper-large-v3"
-                                : settings.speechModel.selectedSTTModel
-                            transcriber = RemoteSpeechTranscriber(client: client, model: model, logger: logger)
-                            logger.info("bootstrap using remote stt provider=\(settings.speechModel.provider.displayName) model=\(model)")
-                        } else {
-                            fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
-                        }
+                        let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
+                        let model = settings.speechModel.selectedSTTModel.isEmpty
+                            ? settings.speechModel.provider.sttModelPresets.first ?? "whisper-large-v3"
+                            : settings.speechModel.selectedSTTModel
+                        transcriber = RemoteSpeechTranscriber(client: client, model: model, logger: logger)
+                        logger.info("bootstrap using remote stt provider=\(settings.speechModel.provider.displayName) model=\(model)")
                     } else {
                         logger.warn("bootstrap stt api key not found for provider=\(settings.speechModel.provider.displayName), falling back to on-device")
-                        fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
+                        transcriber = OnDeviceSpeechTranscriber(logger: logger)
                     }
                 } catch {
                     logger.warn("bootstrap stt keychain error=\(error.localizedDescription), falling back to on-device")
-                    fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
+                    transcriber = OnDeviceSpeechTranscriber(logger: logger)
                 }
             } else {
-                logger.warn("bootstrap stt no effective endpoint for provider=\(settings.speechModel.provider.displayName), falling back to on-device")
-                fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
+                transcriber = OnDeviceSpeechTranscriber(logger: logger)
             }
         } else {
             fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
