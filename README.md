@@ -396,6 +396,7 @@ bash scripts/install_hooks.sh
 | UX/UI 原型 | [`docs/HolooVoxLite_UXUI_Prototype.html`](docs/HolooVoxLite_UXUI_Prototype.html) | 可交互引导与使用态原型 |
 | GitFlow 策略 | [`docs/GITFLOW.md`](docs/GITFLOW.md) | 分支模型与合并规则详解 |
 | 代码生成规则 | [`.trae/rules/rules.md`](.trae/rules/rules.md) | AI 辅助开发约束规则 |
+| ddns 库分析 | [`docs/ddns库分析.md`](docs/ddns库分析.md) | orvice/ddns 动态 DNS 客户端库分析 |
 
 ---
 
