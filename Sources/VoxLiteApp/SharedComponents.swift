@@ -248,3 +248,28 @@ extension Color {
         )
     }
 }
+
+enum AID {
+    enum MainWindow {
+        static let sidebarWelcome = "mainWindow_sidebar_welcome"
+        static let sidebarHome = "mainWindow_sidebar_home"
+        static let sidebarSkills = "mainWindow_sidebar_skills"
+        static let sidebarSettings = "mainWindow_sidebar_settings"
+    }
+
+    enum Settings {
+        static let sttProviderPicker = "settings_stt_providerPicker"
+        static let sttEndpointField = "settings_stt_endpointField"
+        static let sttModelField = "settings_stt_modelField"
+        static let sttApiKeyField = "settings_stt_apiKeyField"
+        static let sttValidateButton = "settings_stt_validateButton"
+        static let sttValidationStatus = "settings_stt_validationStatus"
+        static let llmProviderPicker = "settings_llm_providerPicker"
+        static let llmEndpointField = "settings_llm_endpointField"
+        static let llmModelField = "settings_llm_modelField"
+        static let llmApiKeyField = "settings_llm_apiKeyField"
+        static let llmValidateButton = "settings_llm_validateButton"
+        static let llmValidationStatus = "settings_llm_validationStatus"
+        static let saveButton = "settings_saveButton"
+    }
+}

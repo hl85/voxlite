@@ -45,6 +45,7 @@ struct ModelSettingsView: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                         .frame(width: 200)
+                        .accessibilityIdentifier(AID.Settings.sttProviderPicker)
                         .onChange(of: sttProvider) { _, newValue in
                             handleSTTProviderChange(newValue)
                         }
@@ -69,6 +70,7 @@ struct ModelSettingsView: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                         .frame(width: 200)
+                        .accessibilityIdentifier(AID.Settings.llmProviderPicker)
                         .onChange(of: llmProvider) { _, newValue in
                             handleLLMProviderChange(newValue)
                         }
@@ -88,6 +90,7 @@ struct ModelSettingsView: View {
                     saveConfiguration()
                 }
                 .buttonStyle(VoxPrimaryButtonStyle())
+                .accessibilityIdentifier(AID.Settings.saveButton)
             }
         }
         .onAppear {
@@ -109,6 +112,7 @@ struct ModelSettingsView: View {
                 TextField("https://api.example.com/v1", text: isSTT ? $sttEndpoint : $llmEndpoint)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 280)
+                    .accessibilityIdentifier(isSTT ? AID.Settings.sttEndpointField : AID.Settings.llmEndpointField)
             } else {
                 Text(provider.defaultEndpoint.absoluteString)
                     .font(.system(size: 13))
@@ -122,6 +126,7 @@ struct ModelSettingsView: View {
                 TextField("输入模型名称", text: isSTT ? $sttModelName : $llmModelName)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 200)
+                    .accessibilityIdentifier(isSTT ? AID.Settings.sttModelField : AID.Settings.llmModelField)
             } else {
                 let presets = isSTT ? provider.sttModelPresets : provider.llmModelPresets
                 Picker("", selection: isSTT ? $sttModelName : $llmModelName) {
@@ -132,6 +137,7 @@ struct ModelSettingsView: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .frame(width: 200)
+                .accessibilityIdentifier(isSTT ? AID.Settings.sttModelField : AID.Settings.llmModelField)
                 .onChange(of: isSTT ? sttModelName : llmModelName) { _, newValue in
                     if isSTT {
                         sttModelMemory[provider.rawValue] = newValue
@@ -149,6 +155,7 @@ struct ModelSettingsView: View {
             ))
             .textFieldStyle(.roundedBorder)
             .frame(width: 280)
+            .accessibilityIdentifier(isSTT ? AID.Settings.sttApiKeyField : AID.Settings.llmApiKeyField)
         }
         
         HStack {
@@ -163,8 +170,10 @@ struct ModelSettingsView: View {
                 switch status {
                 case .success:
                     statusPill("连接成功", tone: .ok)
+                        .accessibilityIdentifier(isSTT ? AID.Settings.sttValidationStatus : AID.Settings.llmValidationStatus)
                 case .failure(let error):
                     statusPill(error, tone: .danger)
+                        .accessibilityIdentifier(isSTT ? AID.Settings.sttValidationStatus : AID.Settings.llmValidationStatus)
                 case .none:
                     EmptyView()
                 }
@@ -175,6 +184,7 @@ struct ModelSettingsView: View {
             }
             .buttonStyle(VoxSecondaryButtonStyle())
             .disabled(isValidating[provider.rawValue] == true || (apiKeys[provider.rawValue] ?? "").isEmpty)
+            .accessibilityIdentifier(isSTT ? AID.Settings.sttValidateButton : AID.Settings.llmValidateButton)
         }
     }
     

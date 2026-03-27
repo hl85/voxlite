@@ -62,6 +62,17 @@ let package = Package(
                 "VoxLiteSystem",
                 "VoxLiteFeature"
             ]
+        ),
+        .testTarget(
+            name: "VoxLiteTests",
+            dependencies: [
+                "VoxLiteDomain",
+                "VoxLiteCore",
+                "VoxLiteInput",
+                "VoxLiteOutput",
+                "VoxLiteSystem",
+                "VoxLiteFeature"
+            ]
         )
     ]
 )

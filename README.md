@@ -1,6 +1,6 @@
 # 和乐轻音 · Holoo VoxLite
 
-> **按住说，松开写。** 一款极轻量的 macOS 系统级语音录入助手。
+> **按住说，松开写。** 一款极轻量的 macOS 系统级语音录入助手。只有 2M 的安装包，极致的轻量快捷！
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2015%2B-blue)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/swift-6.0-orange)](https://swift.org)

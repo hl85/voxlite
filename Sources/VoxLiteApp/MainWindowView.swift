@@ -223,8 +223,22 @@ private extension MainWindowView {
         .foregroundStyle(
             model.selectedModule == module ? palette.sidebarActiveText : palette.sidebarMutedText
         )
+        .accessibilityIdentifier(identifier(for: module))
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
+    }
+
+    func identifier(for module: MainModule) -> String {
+        switch module {
+        case .welcome:
+            return AID.MainWindow.sidebarWelcome
+        case .home:
+            return AID.MainWindow.sidebarHome
+        case .skills:
+            return AID.MainWindow.sidebarSkills
+        case .settings:
+            return AID.MainWindow.sidebarSettings
+        }
     }
 
     var welcomeModule: some View {
