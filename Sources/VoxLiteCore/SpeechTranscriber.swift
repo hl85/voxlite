@@ -4,6 +4,19 @@ import Speech
 import VoxLiteDomain
 import VoxLiteSystem
 
+public final class UnsupportedPlatformSpeechTranscriber: SpeechTranscribing {
+    private let logger: LoggerServing
+
+    public init(logger: LoggerServing) {
+        self.logger = logger
+    }
+
+    public func transcribe(audioFileURL: URL, elapsedMs: Int?) async throws -> SpeechTranscription {
+        logger.warn("transcriber unsupported platform file=\(audioFileURL.lastPathComponent)")
+        throw SpeechTranscriptionError.transcriberUnavailable
+    }
+}
+
 @available(macOS 26.0, iOS 26.0, *)
 public enum SpeechAuthorizationState: Sendable {
     case authorized

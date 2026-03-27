@@ -6,6 +6,26 @@ import Testing
 
 @MainActor
 struct AppViewModelTests {
+    final class TestKeychain: KeychainStoring {
+        var values: [String: String]
+
+        init(values: [String: String] = [:]) {
+            self.values = values
+        }
+
+        func store(_ value: String, forKey key: String) throws {
+            values[key] = value
+        }
+
+        func retrieve(forKey key: String) throws -> String? {
+            values[key]
+        }
+
+        func delete(forKey key: String) throws {
+            values.removeValue(forKey: key)
+        }
+    }
+
     @Test
     func init_whenPermissionsMissing_startsOnOnboardingStepOne() {
         let permissions = TestPermissions(
@@ -109,5 +129,55 @@ struct AppViewModelTests {
         #expect(viewModel.lastError == "处理超时，请重试")
         #expect(viewModel.actionTitle == "重试本次")
         #expect(viewModel.canRetry)
+    }
+
+    @Test
+    func makeTranscriber_whenOnDeviceUnavailable_returnsCompatibilityTranscriber() async throws {
+        let settings = FileAppSettingsStore.defaultSettings
+        let keychain = TestKeychain()
+        let transcriber = VoxLiteFeatureBootstrap.makeTranscriber(
+            settings: settings,
+            keychain: keychain,
+            logger: TestLogger(),
+            onDeviceSpeechAvailable: false
+        )
+        #expect(transcriber.usesRemoteSTT == false)
+        #expect(transcriber.transcriber is UnsupportedPlatformSpeechTranscriber)
+
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("caf")
+        try Data("stub".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        do {
+            _ = try await transcriber.transcriber.transcribe(audioFileURL: tempURL, elapsedMs: 0)
+            Issue.record("Expected unsupported platform transcriber error")
+        } catch let error as SpeechTranscriptionError {
+            #expect(error == .transcriberUnavailable)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func makeTranscriber_whenRemoteSTTConfiguredOnOldSystem_fallsBackToCompatibilityTranscriber() {
+        var settings = FileAppSettingsStore.defaultSettings
+        settings.speechModel = ModelSetting(
+            useRemote: true,
+            provider: .groq,
+            customEndpoint: "",
+            selectedSTTModel: "whisper-large-v3",
+            selectedLLMModel: ""
+        )
+        let keychain = TestKeychain(values: [RemoteProvider.groq.rawValue: "test-key"])
+
+        let transcriber = VoxLiteFeatureBootstrap.makeTranscriber(
+            settings: settings,
+            keychain: keychain,
+            logger: TestLogger(),
+            onDeviceSpeechAvailable: false
+        )
+
+        #expect(transcriber.usesRemoteSTT == false)
+        #expect(transcriber.transcriber is UnsupportedPlatformSpeechTranscriber)
     }
 }

@@ -600,6 +600,53 @@ public final class AppViewModel: ObservableObject {
     }
 }
 public enum VoxLiteFeatureBootstrap {
+    static var onDeviceSpeechAvailable: Bool {
+        if #available(macOS 26.0, iOS 26.0, *) {
+            true
+        } else {
+            false
+        }
+    }
+
+    @MainActor
+    static func makeTranscriber(
+        settings: AppSettings,
+        keychain: KeychainStoring,
+        logger: LoggerServing,
+        onDeviceSpeechAvailable: Bool = VoxLiteFeatureBootstrap.onDeviceSpeechAvailable
+    ) -> (transcriber: any SpeechTranscribing, usesRemoteSTT: Bool) {
+        if settings.speechModel.useRemote,
+           settings.speechModel.provider.supportsSTT,
+           let endpoint = settings.speechModel.effectiveEndpoint {
+            if #available(macOS 26.0, iOS 26.0, *) {
+                do {
+                    let apiKey = try keychain.retrieve(forKey: settings.speechModel.provider.rawValue)
+                    if let apiKey = apiKey {
+                        let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
+                        let model = settings.speechModel.selectedSTTModel.isEmpty
+                            ? settings.speechModel.provider.sttModelPresets.first ?? "whisper-large-v3"
+                            : settings.speechModel.selectedSTTModel
+                        logger.info("bootstrap using remote stt provider=\(settings.speechModel.provider.displayName) model=\(model)")
+                        let transcriber = RemoteSpeechTranscriber(client: client, model: model, logger: logger)
+                        return (transcriber, true)
+                    }
+                    logger.warn("bootstrap stt api key not found for provider=\(settings.speechModel.provider.displayName), falling back to on-device")
+                } catch {
+                    logger.warn("bootstrap stt keychain error=\(error.localizedDescription), falling back to on-device")
+                }
+            } else {
+                logger.warn("bootstrap remote stt unavailable on current platform, falling back to compatibility transcriber")
+            }
+        }
+        if onDeviceSpeechAvailable {
+            if #available(macOS 26.0, iOS 26.0, *) {
+                return (OnDeviceSpeechTranscriber(logger: logger), false)
+            }
+        }
+        logger.warn("bootstrap on-device transcriber unavailable on current platform, using compatibility fallback")
+        return (UnsupportedPlatformSpeechTranscriber(logger: logger), false)
+    }
+
     @MainActor
     private static func buildRuntimeChain(
         settingsStore: AppSettingsStore,
@@ -612,38 +659,11 @@ public enum VoxLiteFeatureBootstrap {
         let settings = settingsStore.loadSettings()
         let stateMachine = VoxStateMachine()
         let audio = AudioCaptureService(logger: logger)
-        var usesRemoteSTT = false
         var usesRemoteLLM = false
 
-        let transcriber: SpeechTranscribing
-        if #available(macOS 26.0, iOS 26.0, *) {
-            if settings.speechModel.useRemote,
-               settings.speechModel.provider.supportsSTT,
-               let endpoint = settings.speechModel.effectiveEndpoint {
-                do {
-                    let apiKey = try keychain.retrieve(forKey: settings.speechModel.provider.rawValue)
-                    if let apiKey = apiKey {
-                        let client = OpenAIClient(baseURL: endpoint, apiKey: apiKey, logger: logger)
-                        let model = settings.speechModel.selectedSTTModel.isEmpty
-                            ? settings.speechModel.provider.sttModelPresets.first ?? "whisper-large-v3"
-                            : settings.speechModel.selectedSTTModel
-                        transcriber = RemoteSpeechTranscriber(client: client, model: model, logger: logger)
-                        usesRemoteSTT = true
-                        logger.info("bootstrap using remote stt provider=\(settings.speechModel.provider.displayName) model=\(model)")
-                    } else {
-                        logger.warn("bootstrap stt api key not found for provider=\(settings.speechModel.provider.displayName), falling back to on-device")
-                        transcriber = OnDeviceSpeechTranscriber(logger: logger)
-                    }
-                } catch {
-                    logger.warn("bootstrap stt keychain error=\(error.localizedDescription), falling back to on-device")
-                    transcriber = OnDeviceSpeechTranscriber(logger: logger)
-                }
-            } else {
-                transcriber = OnDeviceSpeechTranscriber(logger: logger)
-            }
-        } else {
-            fatalError("VoxLite requires macOS 26.0+ / iOS 26.0+")
-        }
+        let transcriberSelection = makeTranscriber(settings: settings, keychain: keychain, logger: logger)
+        let transcriber = transcriberSelection.transcriber
+        let usesRemoteSTT = transcriberSelection.usesRemoteSTT
 
         let generator: PromptGenerating
         if settings.llmModel.useRemote {
