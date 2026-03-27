@@ -8,6 +8,24 @@ set -euo pipefail
 PROTECTED_BRANCHES=("main" "develop")
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
+is_gui_git_client() {
+    [[ -n "${SOURCETREE:-}" ]] || [[ -n "${SOURCE_TREE:-}" ]]
+}
+
+block_protected_branch_gui_push() {
+    local branch="$1"
+    echo ""
+    echo "❌ 已拦截通过 GUI Git 客户端向受保护分支 [$branch] 的推送。"
+    echo ""
+    echo "原因：SourceTree 等 GUI 客户端触发的 Git Hook 运行在与终端不同的 macOS 安全上下文中，"
+    echo "SwiftPM manifest 编译与 VoxLiteSelfCheck 可能被系统限制，无法作为稳定可信的本地门禁。"
+    echo ""
+    echo "请改用终端推送到受保护分支，例如："
+    echo "  git push voxlite HEAD:refs/heads/$branch"
+    echo ""
+    echo "如需使用 SourceTree，请先推送到非受保护分支，再通过 PR 合入。"
+}
+
 run_swift_build() {
     local output
     if output=$(swift build --disable-sandbox 2>&1); then
@@ -25,13 +43,7 @@ run_swift_build() {
         if echo "$output" | grep -q "Build complete!"; then
             return 0
         fi
-        # Sourcetree 等 GUI 客户端的子进程受 macOS 安全策略限制，
-        # manifest 可执行文件可能被系统拦截导致编译始终失败。
-        # 此场景下跳过本地检查，由 CI (GitHub Actions) 兜底保障。
-        echo ""
-        echo "⚠️  当前环境无法完成 Swift 构建（可能为 GUI 客户端限制）。"
-        echo "⚠️  跳过本地自检，将由远端 CI 保障代码质量。"
-        return 0
+        return 2
     fi
     return 1
 }
@@ -48,13 +60,24 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
     done
 
     if [[ "$IS_PROTECTED" == "true" ]]; then
+        if is_gui_git_client; then
+            block_protected_branch_gui_push "$BRANCH"
+            exit 1
+        fi
+
         echo ""
         echo "🔍 推送到受保护分支 [$BRANCH]，执行自检..."
         echo ""
 
         echo "📦 [1/2] swift build..."
-        if ! run_swift_build; then
+        run_swift_build
+        BUILD_EXIT_CODE=$?
+        if [[ "$BUILD_EXIT_CODE" -ne 0 ]]; then
             echo ""
+            if [[ "$BUILD_EXIT_CODE" -eq 2 ]]; then
+                block_protected_branch_gui_push "$BRANCH"
+                exit 1
+            fi
             echo "❌ 构建失败，推送已拦截。"
             exit 1
         fi
@@ -65,7 +88,8 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
         if echo "$RESULT" | grep -q "SELF_CHECK_OK"; then
             echo "✅ 自检通过：SELF_CHECK_OK"
         elif echo "$RESULT" | grep -q "Missing or empty JSON output from manifest compilation"; then
-            echo "⚠️  当前环境无法运行自检（GUI 客户端限制），将由远端 CI 保障。"
+            block_protected_branch_gui_push "$BRANCH"
+            exit 1
         else
             echo ""
             echo "❌ 自检未通过，推送已拦截。"
