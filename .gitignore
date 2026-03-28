@@ -2,6 +2,7 @@
 .build/
 .swiftpm/
 .sisyphus/
+.temp/
 build/
 DerivedData/
 
@@ -13,3 +14,6 @@ scripts/beta_export_options.plist
 *.p12
 *.cer
 *.mobileprovision
+
+#IDE
+.trae
