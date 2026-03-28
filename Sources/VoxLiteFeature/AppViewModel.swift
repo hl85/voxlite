@@ -909,7 +909,8 @@ public enum VoxLiteFeatureBootstrap {
 
         let resolver = FrontmostContextResolver()
         let cleaner = RuleBasedTextCleaner(skillStore: skillStore, matcher: SkillMatcher(), generator: generator)
-        let injector = ClipboardTextInjector(logger: logger)
+        let clipboardInjector = ClipboardTextInjector(logger: logger)
+        let injector = InjectionStrategyChain(strategies: [clipboardInjector])
         let retryPolicy = (usesRemoteSTT || usesRemoteLLM) ? RetryPolicy.remoteModelDefault : .m2Default
         let pipeline = VoicePipeline(
             stateMachine: stateMachine,

@@ -28,6 +28,11 @@ public protocol TextInjecting {
     func injectText(_ text: String) -> InjectResult
 }
 
+/// 注入策略：按顺序尝试注入方案，首个成功即返回；全部失败则返回最后一个结果
+public protocol InjectionStrategyServing: TextInjecting {
+    var strategies: [TextInjecting] { get }
+}
+
 @MainActor
 public protocol PermissionManaging {
     func hasRequiredPermissions() -> Bool
