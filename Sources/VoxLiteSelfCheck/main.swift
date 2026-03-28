@@ -10,6 +10,18 @@ enum SelfCheckFailure: Error {
     case failed(String)
 }
 
+struct CheckResult {
+    let name: String
+    let passed: Bool
+    let error: String?
+
+    init(name: String, passed: Bool, error: String? = nil) {
+        self.name = name
+        self.passed = passed
+        self.error = error
+    }
+}
+
 func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() {
         throw SelfCheckFailure.failed(message)
@@ -125,15 +137,39 @@ func runAppSettingsOnboardingChecks() throws {
     try require(decoded.onboardingCompleted, "onboarding flag should persist through JSON")
 }
 
+func runContextInfoEnrichmentChecks() throws {
+    let legacy = ContextInfo(bundleId: "com.test.legacy", appCategory: .general, inputRole: "textField", locale: "zh_CN")
+    try require(legacy.bundleId == "com.test.legacy", "legacy context should preserve bundleId")
+    try require(legacy.appCategory == .general, "legacy context should preserve appCategory")
+    try require(legacy.enrich == nil, "legacy context init should keep enrich optional")
+
+    let enriched = ContextInfo(
+        bundleId: "com.apple.dt.Xcode",
+        appCategory: .development,
+        inputRole: "textField",
+        locale: "zh_CN",
+        enrich: ContextEnrichment(
+            appName: "Xcode",
+            isEditable: true,
+            focusedRole: "sourceEditor",
+            vocabularyBias: ["cmd": "command"]
+        )
+    )
+    try require(enriched.enrich?.appName == "Xcode", "enriched context should preserve appName")
+    try require(enriched.enrich?.focusedRole == "sourceEditor", "enriched context should preserve focusedRole")
+    try require(enriched.enrich?.vocabularyBias["cmd"] == "command", "enriched context should preserve vocabulary bias")
+}
+
 @MainActor
 func runCleanerChecks() async throws {
-    let cleaner = RuleBasedTextCleaner(generator: StubPromptGenerator())
+    let cleaner = RuleBasedTextCleaner(generator: FailingPromptGenerator())
     let chatContext = ContextInfo(bundleId: "com.slack", appCategory: .communication, inputRole: "textField", locale: "zh_CN")
     let devContext = ContextInfo(bundleId: "com.apple.dt.Xcode", appCategory: .development, inputRole: "textField", locale: "zh_CN")
     let chat = await cleaner.cleanText(transcript: "今晚完成接口对齐", context: chatContext)
-    let dev = await cleaner.cleanText(transcript: "add fallback path", context: devContext)
+    let chatVerbose = await cleaner.cleanText(transcript: "嗯 今晚先和产品对齐 然后 晚点发你确认", context: chatContext)
+    let dev = await cleaner.cleanText(transcript: "添加 fallbackPath 修改 user_name 删除 oldEndpoint", context: devContext)
     let writing = await cleaner.cleanText(
-        transcript: "这段内容希望更正式一些",
+        transcript: "嗯 我觉得这段内容有点口语化，我们先这样，后面再想一下怎么展开",
         context: ContextInfo(bundleId: "com.apple.Pages", appCategory: .writing, inputRole: "textField", locale: "zh_CN")
     )
     let general = await cleaner.cleanText(
@@ -142,11 +178,15 @@ func runCleanerChecks() async throws {
     )
     try require(chat.success, "chat clean should succeed")
     try require(chat.cleanText.contains("今晚完成接口对齐"), "chat clean should keep original meaning")
-    try require(chat.cleanText.contains("原始文本：") == false, "chat clean should not output prompt text")
+    try require(chat.cleanText == "今晚完成接口对齐。", "chat fallback should normalize sentence ending")
+    try require(chatVerbose.cleanText == "今晚先和产品对齐，晚点发你确认。", "chat fallback should remove filler words and improve sentence breaks")
     try require(dev.success, "dev clean should succeed")
-    try require(dev.cleanText.contains("add fallback path"), "dev clean should keep command content")
+    try require(dev.cleanText.contains("fallbackPath"), "dev clean should keep camelCase naming")
+    try require(dev.cleanText.contains("user_name"), "dev clean should keep snake_case naming")
+    try require(dev.cleanText.contains("删除"), "dev clean should keep imperative tone")
     try require(writing.success, "writing clean should succeed")
-    try require(writing.cleanText.contains("更正式一些"), "writing clean should keep source content")
+    try require(writing.cleanText.contains("我认为"), "writing clean should use formal wording")
+    try require(writing.cleanText.contains("\n\n"), "writing clean should promote paragraph structure")
     try require(general.success, "general clean should succeed")
     try require(general.cleanText.contains("会议纪要先这样"), "general clean should trim and preserve source")
     let empty = await cleaner.cleanText(
@@ -154,6 +194,19 @@ func runCleanerChecks() async throws {
         context: ContextInfo(bundleId: "com.apple.TextEdit", appCategory: .general, inputRole: "textField", locale: "zh_CN")
     )
     try require(empty.success == false, "empty transcript should fail")
+
+    let nonEditable = await cleaner.cleanText(
+        transcript: "cmd 换成 cmd",
+        context: ContextInfo(
+            bundleId: "com.apple.finder",
+            appCategory: .general,
+            inputRole: "textField",
+            locale: "zh_CN",
+            enrich: ContextEnrichment(appName: "Finder", isEditable: false, focusedRole: "list", vocabularyBias: ["cmd": "command"])
+        )
+    )
+    try require(nonEditable.cleanText.contains("command"), "non-editable context should still apply vocabulary bias")
+    try require(nonEditable.cleanText.contains("。") == false, "non-editable context should soften sentence punctuation")
 }
 
 final class StubStateStore: StateStore {
@@ -269,6 +322,67 @@ final class StubInjectorFailThenSuccess: TextInjecting {
     }
 }
 
+@MainActor
+final class CountingStubTranscriber: SpeechTranscribing {
+    private let delayNs: UInt64
+    private(set) var callCount = 0
+
+    init(delayNs: UInt64 = 0) {
+        self.delayNs = delayNs
+    }
+
+    func transcribe(audioFileURL: URL, elapsedMs: Int?) async throws -> SpeechTranscription {
+        callCount += 1
+        if delayNs > 0 {
+            try? await Task.sleep(nanoseconds: delayNs)
+        }
+        return SpeechTranscription(text: "原始转写文本", latencyMs: 5, usedOnDevice: true)
+    }
+}
+
+@MainActor
+final class CountingStubCleaner: TextCleaning {
+    private let delayNs: UInt64
+    private(set) var callCount = 0
+
+    init(delayNs: UInt64 = 0) {
+        self.delayNs = delayNs
+    }
+
+    func cleanText(transcript: String, context: ContextInfo) async -> CleanResult {
+        callCount += 1
+        if delayNs > 0 {
+            try? await Task.sleep(nanoseconds: delayNs)
+        }
+        return CleanResult(
+            cleanText: "清洗后文本",
+            confidence: 0.9,
+            styleTag: "沟通风格",
+            usedFallback: false,
+            success: true,
+            errorCode: nil,
+            latencyMs: 5
+        )
+    }
+}
+
+final class CountingStubInjector: TextInjecting {
+    private let results: [InjectResult]
+    private(set) var injectedTexts: [String] = []
+    private(set) var callCount = 0
+
+    init(results: [InjectResult]) {
+        self.results = results
+    }
+
+    func injectText(_ text: String) -> InjectResult {
+        injectedTexts.append(text)
+        let index = min(callCount, results.count - 1)
+        callCount += 1
+        return results[index]
+    }
+}
+
 struct StubPromptGenerator: PromptGenerating {
     func generateText(from prompt: String) async throws -> String {
         let markers = ["原始文本：", "用户指令：", "原始内容："]
@@ -350,6 +464,16 @@ final class SpyLogger: LoggerServing, @unchecked Sendable {
 
 final class StubMetrics: MetricsServing, Sendable {
     func record(event: String, success: Bool, errorCode: VoxErrorCode?, latencyMs: Int) {}
+    func percentile(_ event: String, _ value: Double) -> Int? { nil }
+}
+
+final class SelfCheckMetrics: MetricsServing, @unchecked Sendable {
+    private(set) var events: [String] = []
+
+    func record(event: String, success: Bool, errorCode: VoxErrorCode?, latencyMs: Int) {
+        events.append(event)
+    }
+
     func percentile(_ event: String, _ value: Double) -> Int? { nil }
 }
 
@@ -496,9 +620,38 @@ func runPromptToLLMInjectionChecks() async throws {
     let sessionId = try pipeline.startRecording()
     let result = try await pipeline.stopRecordingAndProcess(sessionId: sessionId)
     try require(generator.prompts.count == 1, "pipeline should call llm once")
-    try require(generator.prompts.first?.contains("原始文本：原始转写文本") == true, "llm prompt should contain template and transcript")
+    try require(generator.prompts.first?.contains("沟通路由补充要求") == true, "llm prompt should prepend communication route instructions")
+    try require(generator.prompts.first?.contains("原始文本：原始转写文本。") == true, "llm prompt should contain normalized transcript")
     try require(injector.lastText == "LLM加工后的结果。", "injector should receive llm output instead of prompt")
     try require(result.clean.cleanText == "LLM加工后的结果。", "process result should store llm output text")
+}
+
+@MainActor
+func runContextAwarePromptChecks() async throws {
+    let generator = CapturingPromptGenerator(output: "command add fallback path。")
+    let cleaner = RuleBasedTextCleaner(
+        skillStore: InMemorySkillStore(),
+        matcher: SkillMatcher(),
+        generator: generator
+    )
+    let context = ContextInfo(
+        bundleId: "com.apple.dt.Xcode",
+        appCategory: .development,
+        inputRole: "textField",
+        locale: "zh_CN",
+        enrich: ContextEnrichment(
+            appName: "Xcode",
+            isEditable: true,
+            focusedRole: "sourceEditor",
+            vocabularyBias: ["cmd": "command"]
+        )
+    )
+    _ = await cleaner.cleanText(transcript: "cmd add fallback path", context: context)
+    let prompt = generator.prompts.first ?? ""
+    try require(prompt.contains("当前应用：Xcode。"), "context-aware prompt should include app name")
+    try require(prompt.contains("焦点角色：sourceEditor。"), "context-aware prompt should include focused role")
+    try require(prompt.contains("词汇偏置：优先使用以下写法：cmd→command。"), "context-aware prompt should include vocabulary bias")
+    try require(prompt.contains("command add fallback path"), "prompt input should apply vocabulary bias before sending to llm")
 }
 
 @MainActor
@@ -531,6 +684,7 @@ func runBootstrapRemoteRuntimeChecks() throws {
     try require(vm.llmModelName == "Deepseek 深度求索 (deepseek-chat)", "bootstrap should use persisted remote llm settings for runtime model name")
     try require(vm.foundationModelAvailability == .available, "runtime availability should come from active cleaner/generator chain")
     try require(vm.foundationModelStatus == "已就绪", "runtime status should reflect active remote generator availability")
+    try require(vm.foundationModelReadiness == .ready, "runtime readiness enum should reflect active remote generator availability")
 }
 
 @MainActor
@@ -567,6 +721,7 @@ func runHotSwitchRuntimeChecks() throws {
     try require(vm.llmModelName == "Deepseek 深度求索 (deepseek-chat)", "hot-switch should refresh active llm model name immediately")
     try require(vm.foundationModelAvailability == .available, "hot-switch should refresh active availability immediately")
     try require(vm.foundationModelStatus == "已就绪", "hot-switch should refresh active model status immediately")
+    try require(vm.foundationModelReadiness == .ready, "hot-switch should refresh active readiness enum immediately")
 }
 
 @MainActor
@@ -646,13 +801,19 @@ func runPermissionErrorChecks() async throws {
 
 @MainActor
 func runRetryChecks() async throws {
+    let countingTranscriber = CountingStubTranscriber()
+    let countingCleaner = CountingStubCleaner()
+    let countingInjector = CountingStubInjector(results: [
+        InjectResult(success: false, usedClipboardFallback: true, errorCode: .injectionFailed, latencyMs: 5),
+        InjectResult(success: true, usedClipboardFallback: false, errorCode: nil, latencyMs: 5)
+    ])
     let recoverable = VoicePipeline(
         stateMachine: StubStateStore(),
         audioCapture: StubAudio(),
-        transcriber: StubTranscriber(),
+        transcriber: countingTranscriber,
         contextResolver: StubContextResolver(),
-        cleaner: StubCleanerFail(),
-        injector: StubInjectorFailThenSuccess(),
+        cleaner: countingCleaner,
+        injector: countingInjector,
         permissions: StubPermissions(),
         logger: StubLogger(),
         metrics: StubMetrics(),
@@ -661,6 +822,34 @@ func runRetryChecks() async throws {
     let recoverableSession = try recoverable.startRecording()
     let recoverableResult = try await recoverable.stopRecordingAndProcess(sessionId: recoverableSession)
     try require(recoverableResult.inject.success, "retry should recover transient injection failure")
+    try require(countingTranscriber.callCount == 1, "inject retry should not rerun transcribe")
+    try require(countingCleaner.callCount == 1, "inject retry should not rerun clean")
+    try require(countingInjector.callCount == 2, "inject retry should only retry injection")
+
+    let delayedTranscriber = CountingStubTranscriber()
+    let delayedCleaner = CountingStubCleaner()
+    let singleSuccessInjector = CountingStubInjector(results: [
+        InjectResult(success: true, usedClipboardFallback: false, errorCode: nil, latencyMs: 50)
+    ])
+    let postInjectBudgetPipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: delayedTranscriber,
+        contextResolver: StubContextResolver(),
+        cleaner: delayedCleaner,
+        injector: singleSuccessInjector,
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics(),
+        retryPolicy: RetryPolicy(timeoutMs: 20, maxRetries: 1)
+    )
+    let postInjectBudgetSession = try postInjectBudgetPipeline.startRecording()
+    let postInjectBudgetResult = try await postInjectBudgetPipeline.stopRecordingAndProcess(sessionId: postInjectBudgetSession)
+    try require(postInjectBudgetResult.inject.success, "successful injection should not be turned into timeout after side effect")
+    try require(postInjectBudgetResult.inject.latencyMs == 50, "successful inject should preserve observed side-effect latency")
+    try require(singleSuccessInjector.callCount == 1, "successful injection should not write twice after budget is exceeded")
+    try require(delayedTranscriber.callCount == 1, "post-inject success should keep transcribe single-shot")
+    try require(delayedCleaner.callCount == 1, "post-inject success should keep clean single-shot")
 
     let exhausted = VoicePipeline(
         stateMachine: StubStateStore(),
@@ -963,6 +1152,8 @@ func runAppStateMachineChecks() async throws {
     try require(denyVM.stateText == "Failed", "press with missing permission should fail")
     try require(denyVM.actionTitle == "打开系统设置", "missing permission should expose settings CTA")
     try require(denyVM.recommendedSettingItem == .microphone, "missing permission should recommend microphone settings")
+    try require(denyVM.speechReadiness == .unavailable(.permissionRequired), "missing permission should expose unavailable speech readiness")
+    try require(denyVM.speechStatus == "不可用：权限未就绪", "missing permission should expose detailed speech status")
 
     let timeoutPipeline = VoicePipeline(
         stateMachine: StubStateStore(),
@@ -986,9 +1177,101 @@ func runAppStateMachineChecks() async throws {
     await timeoutVM.simulateReleaseForTesting()
     try require(timeoutVM.canRetry, "timeout failure should allow retry")
     try require(timeoutVM.actionTitle == "重试本次", "timeout failure should show retry CTA")
+    try require(timeoutVM.speechReadiness == .unavailable(.unavailable), "timeout failure should mark speech readiness unavailable")
     await timeoutVM.retryLatest()
     try require(timeoutVM.stateText == "Idle", "retry action should reset to idle")
     try require(timeoutVM.canRetry == false, "retry action should clear retry flag")
+}
+
+@available(macOS 26.0, iOS 26.0, *)
+@MainActor
+func runWarmupModeChecks() async throws {
+    let logger = StubLogger()
+    let service = SpeechTranscriberWarmupService(logger: logger)
+    let locale = Locale(identifier: "zh-CN")
+
+    // 验证初始状态
+    let initialState = await service.state
+    try require(initialState == .idle, "warmup service initial state should be idle")
+
+    // 测试 warmup 启动
+    let warmupResult = await service.warmup(locale: locale, waitForCompletion: false)
+    try require(warmupResult == true, "warmup should start successfully")
+
+    // 验证状态已改变（不是 idle）
+    let startedState = await service.state
+    try require(startedState != .idle, "warmup should transition from idle")
+
+    // 测试缓存命中：同 locale 再次 warmup
+    let cachedStart = Date()
+    let cachedResult = await service.warmup(locale: locale, waitForCompletion: false)
+    let cachedElapsed = Date().timeIntervalSince(cachedStart)
+    try require(cachedResult == true, "cached warmup should succeed")
+    try require(cachedElapsed < 0.1, "cached warmup should be fast (< 100ms)")
+
+    // 测试不同 locale 触发新 warmup
+    let enLocale = Locale(identifier: "en-US")
+    let enResult = await service.warmup(locale: enLocale, waitForCompletion: false)
+    try require(enResult == true, "different locale warmup should start")
+
+    // 测试 isReady 方法
+    let isReadyResult = await service.isReady(for: locale)
+    // 由于 warmup 是异步的，isReady 可能返回 true 或 false
+    // 我们只需要验证方法不崩溃即可
+    _ = isReadyResult
+
+    // 测试 deallocate
+    await service.deallocate(locale: locale)
+    let afterDeallocState = await service.state
+    // 状态应该被重置（如果当前是该 locale 的 ready 状态）
+    _ = afterDeallocState
+
+    // 测试 reset
+    await service.reset()
+    let resetState = await service.state
+    try require(resetState == .idle, "reset should return to idle state")
+}
+
+@available(macOS 26.0, iOS 26.0, *)
+@MainActor
+func runWarmupPerformanceChecks() async throws {
+    let logger = StubLogger()
+    let service = SpeechTranscriberWarmupService(logger: logger)
+    let locale = Locale(identifier: "zh-CN")
+
+    // 测试 warmup 启动延迟（应小于 50ms）
+    let start = Date()
+    let result = await service.warmup(locale: locale, waitForCompletion: false)
+    let elapsed = Date().timeIntervalSince(start)
+
+    try require(result == true, "warmup should start")
+    try require(elapsed < 0.05, "warmup startup latency should be < 50ms (actual: \(elapsed * 1000)ms)")
+
+    // 等待状态稳定
+    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+
+    // 测试缓存命中延迟（应小于 10ms）
+    let cachedStart = Date()
+    let cachedResult = await service.warmup(locale: locale, waitForCompletion: false)
+    let cachedElapsed = Date().timeIntervalSince(cachedStart)
+
+    try require(cachedResult == true, "cached warmup should succeed")
+    try require(cachedElapsed < 0.01, "cache hit latency should be < 10ms (actual: \(cachedElapsed * 1000)ms)")
+}
+
+@available(macOS 26.0, iOS 26.0, *)
+@MainActor
+func runWarmupIntegrationChecks() async throws {
+    let logger = StubLogger()
+    let session = SpeechTranscriberWarmupService(logger: logger)
+    let locale = Locale(identifier: "zh-CN")
+    let result = await session.warmup(locale: locale, waitForCompletion: false)
+    try require(result == true, "warmup service integration should start")
+    _ = await session.isReady(for: locale)
+    await session.deallocate(locale: locale)
+    await session.reset()
+    let state = await session.state
+    try require(state == .idle, "warmup service integration reset should return idle")
 }
 
 @MainActor
@@ -1024,6 +1307,84 @@ func runPerformanceThresholdChecks() async throws {
     try require((transcribeP50 ?? Int.max) < 1000, "transcribe P50 should be below 1000ms")
     try require((cleanP50 ?? Int.max) < 1000, "clean P50 should be below 1000ms")
     try require((injectP50 ?? Int.max) < 500, "inject P50 should be below 500ms")
+}
+
+@MainActor
+func runPipelineObservabilityChecks() async throws {
+    let metrics = SelfCheckMetrics()
+    let transcriber = CountingStubTranscriber()
+    let pipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: transcriber,
+        contextResolver: StubContextResolver(),
+        cleaner: StubCleanerSuccess(),
+        injector: StubInjector(),
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: metrics
+    )
+    let sessionId = try pipeline.startRecording()
+    _ = try await pipeline.stopRecordingAndProcess(sessionId: sessionId)
+    try require(metrics.events.contains("pipeline.stage.transcribe"), "transcribe stage metric should be recorded")
+    try require(metrics.events.contains("pipeline.stage.clean"), "clean stage metric should be recorded")
+    try require(metrics.events.contains("pipeline.stage.inject"), "inject stage metric should be recorded")
+
+    let observedTranscriber = SelfCheckObservedTranscriber()
+    let observedPipeline = VoicePipeline(
+        stateMachine: StubStateStore(),
+        audioCapture: StubAudio(),
+        transcriber: observedTranscriber,
+        contextResolver: StubContextResolver(),
+        cleaner: StubCleanerSuccess(),
+        injector: StubInjector(),
+        permissions: StubPermissions(),
+        logger: StubLogger(),
+        metrics: StubMetrics()
+    )
+    var observedStages: [VoicePipeline.Stage] = []
+    observedPipeline.stageObserver = { event in
+        if event.phase == .completed {
+            observedStages.append(event.stage)
+        }
+    }
+    let observedSession = try observedPipeline.startRecording()
+    _ = try await observedPipeline.stopRecordingAndProcess(sessionId: observedSession)
+    try require(observedStages.contains(.assetCheck), "asset-check stage should be observable")
+    try require(observedStages.contains(.assetInstall), "asset-install stage should be observable")
+    try require(observedStages.contains(.analyzerCreate), "analyzer-create stage should be observable")
+    try require(observedStages.contains(.analyzerWarmup), "analyzer-warmup stage should be observable")
+
+    let vm = AppViewModel(
+        pipeline: observedPipeline,
+        permissions: StubPermissions(),
+        performanceSampler: PerformanceSampler(),
+        settingsStore: InMemorySettingsStore(settings: FileAppSettingsStore.defaultSettings)
+    )
+    vm.skipOnboarding()
+    await vm.simulatePressForTesting()
+    let releaseTask = Task { await vm.simulateReleaseForTesting() }
+    try? await Task.sleep(nanoseconds: 10_000_000)
+    try require(vm.processingFeedbackText.isEmpty == false, "processing feedback should be exposed during pipeline processing")
+    await releaseTask.value
+    try require(vm.processingFeedbackText == "已完成", "successful pipeline should expose completed feedback")
+}
+
+@MainActor
+final class SelfCheckObservedTranscriber: SpeechTranscribing, VoicePipelineStageReporting {
+    var stageObserver: VoicePipeline.StageObserver?
+
+    func transcribe(audioFileURL: URL, elapsedMs: Int?) async throws -> SpeechTranscription {
+        stageObserver?(.init(stage: .assetCheck, phase: .started))
+        stageObserver?(.init(stage: .assetCheck, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        stageObserver?(.init(stage: .assetInstall, phase: .started))
+        stageObserver?(.init(stage: .assetInstall, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        stageObserver?(.init(stage: .analyzerCreate, phase: .started))
+        stageObserver?(.init(stage: .analyzerCreate, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        stageObserver?(.init(stage: .analyzerWarmup, phase: .started))
+        stageObserver?(.init(stage: .analyzerWarmup, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        return SpeechTranscription(text: "原始转写文本", latencyMs: 5, usedOnDevice: true)
+    }
 }
 
 @MainActor
@@ -1125,12 +1486,20 @@ Task {
         try await runRetryChecks()
         try await runTimeoutChecks()
         try await runRemoteTimeoutBudgetChecks()
+
+        // Warmup/Readiness 模式自检
+        if #available(macOS 26.0, iOS 26.0, *) {
+            try await runWarmupModeChecks()
+            try await runWarmupPerformanceChecks()
+            try await runWarmupIntegrationChecks()
+        }
         try runFnMonitorChecks()
         try runClipboardInjectorChecks()
         try runSelectedModuleRegressionChecks()
         try runMenuBarDisplayModeRegressionChecks()
         try await runAppStateMachineChecks()
         try await runPerformanceThresholdChecks()
+        try await runPipelineObservabilityChecks()
         try await runPrototypeMigrationChecks()
         print("SELF_CHECK_OK")
         exit(0)
@@ -1144,3 +1513,234 @@ Task {
 }
 
 dispatchMain()
+
+// MARK: - Model Retention Policy Checks
+
+func checkModelRetentionPolicy() -> [CheckResult] {
+    var results: [CheckResult] = []
+
+    // Check 1: Device Tier Detection
+    results.append(checkDeviceTierDetection())
+
+    // Check 2: Retention Decision Logic
+    results.append(checkRetentionDecisionLogic())
+
+    // Check 3: Resource Pressure Evaluation
+    results.append(checkResourcePressureEvaluation())
+
+    // Check 4: Platform-specific Behavior
+    results.append(checkPlatformSpecificBehavior())
+
+    return results
+}
+
+func checkDeviceTierDetection() -> CheckResult {
+    let checkName = "DeviceTier Detection"
+
+    // Verify device tier can be detected
+    let deviceTier = DeviceTierDetector.detect()
+
+    // On macOS, we should detect either Apple Silicon or Intel
+    #if os(macOS)
+    switch deviceTier {
+    case .appleSilicon, .intelOrConstrained:
+        return CheckResult(name: checkName, passed: true)
+    case .unsupported:
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Device tier detection returned unsupported on macOS"
+        )
+    }
+    #else
+    return CheckResult(
+        name: checkName,
+        passed: deviceTier == .unsupported,
+        error: deviceTier != .unsupported ? "Expected unsupported on non-macOS platform" : nil
+    )
+    #endif
+}
+
+func checkRetentionDecisionLogic() -> CheckResult {
+    let checkName = "Retention Decision Logic"
+
+    // Test Apple Silicon with normal pressure
+    let appleSiliconPolicy = ModelRetentionPolicy(
+        configuration: .default,
+        deviceTier: .appleSilicon
+    )
+
+    let normalSnapshot = RuntimeResourceSnapshot(
+        cpuUsagePercent: 10.0,
+        memoryMB: 150.0
+    )
+
+    let normalDecision = appleSiliconPolicy.evaluate(snapshot: normalSnapshot)
+    guard normalDecision == .retainAll else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Apple Silicon with normal pressure should retain all, got \(normalDecision)"
+        )
+    }
+
+    // Test critical pressure on Apple Silicon
+    let criticalSnapshot = RuntimeResourceSnapshot(
+        cpuUsagePercent: 65.0,
+        memoryMB: 150.0
+    )
+
+    let criticalDecision = appleSiliconPolicy.evaluate(snapshot: criticalSnapshot)
+    guard criticalDecision == .releaseAssetsOnly else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Apple Silicon with critical pressure should release assets only, got \(criticalDecision)"
+        )
+    }
+
+    // Test Intel with critical pressure
+    let intelPolicy = ModelRetentionPolicy(
+        configuration: .default,
+        deviceTier: .intelOrConstrained
+    )
+
+    let intelCriticalDecision = intelPolicy.evaluate(snapshot: criticalSnapshot)
+    guard intelCriticalDecision == .releaseAll else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Intel with critical pressure should release all, got \(intelCriticalDecision)"
+        )
+    }
+
+    return CheckResult(name: checkName, passed: true)
+}
+
+func checkResourcePressureEvaluation() -> CheckResult {
+    let checkName = "Resource Pressure Evaluation"
+
+    let config = ResourcePressureConfiguration.default
+    let sampler = PerformanceSampler(pressureConfiguration: config)
+
+    // Test normal pressure
+    let normalSnapshot = RuntimeResourceSnapshot(
+        cpuUsagePercent: 10.0,
+        memoryMB: 150.0
+    )
+    let normalPressure = sampler.evaluatePressure(snapshot: normalSnapshot)
+    guard normalPressure == .normal else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Expected normal pressure for low CPU/memory, got \(normalPressure)"
+        )
+    }
+
+    // Test elevated CPU pressure
+    let elevatedCPUSnapshot = RuntimeResourceSnapshot(
+        cpuUsagePercent: 35.0,
+        memoryMB: 150.0
+    )
+    let elevatedCPUPressure = sampler.evaluatePressure(snapshot: elevatedCPUSnapshot)
+    guard elevatedCPUPressure == .elevated else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Expected elevated pressure for 35% CPU, got \(elevatedCPUPressure)"
+        )
+    }
+
+    // Test critical memory pressure
+    let criticalMemorySnapshot = RuntimeResourceSnapshot(
+        cpuUsagePercent: 10.0,
+        memoryMB: 550.0
+    )
+    let criticalMemoryPressure = sampler.evaluatePressure(snapshot: criticalMemorySnapshot)
+    guard criticalMemoryPressure == .critical else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Expected critical pressure for 550MB memory, got \(criticalMemoryPressure)"
+        )
+    }
+
+    return CheckResult(name: checkName, passed: true)
+}
+
+func checkPlatformSpecificBehavior() -> CheckResult {
+    let checkName = "Platform-Specific Behavior"
+
+    // Test unsupported platform always releases all
+    let unsupportedPolicy = ModelRetentionPolicy(
+        configuration: .default,
+        deviceTier: .unsupported
+    )
+
+    let normalSnapshot = RuntimeResourceSnapshot(
+        cpuUsagePercent: 10.0,
+        memoryMB: 150.0
+    )
+
+    let unsupportedDecision = unsupportedPolicy.evaluate(snapshot: normalSnapshot)
+    guard unsupportedDecision == .releaseAll else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Unsupported platform should always release all, got \(unsupportedDecision)"
+        )
+    }
+
+    // Test retention enabled status
+    let appleSiliconPolicy = ModelRetentionPolicy(
+        configuration: .default,
+        deviceTier: .appleSilicon
+    )
+
+    guard appleSiliconPolicy.isRetentionEnabled else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Apple Silicon should have retention enabled"
+        )
+    }
+
+    // Test disabled retention on Intel
+    let disabledIntelPolicy = ModelRetentionPolicy(
+        configuration: RetentionPolicyConfiguration(enableOnConstrainedDevices: false),
+        deviceTier: .intelOrConstrained
+    )
+
+    guard !disabledIntelPolicy.isRetentionEnabled else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Intel should have retention disabled when configured"
+        )
+    }
+
+    // Test recommended configuration
+    let appleSiliconConfig = appleSiliconPolicy.recommendedConfiguration
+    guard appleSiliconConfig.cpuElevatedThreshold == 30.0 else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Apple Silicon should use default config with 30% CPU threshold"
+        )
+    }
+
+    let intelPolicy = ModelRetentionPolicy(
+        configuration: .default,
+        deviceTier: .intelOrConstrained
+    )
+    let intelConfig = intelPolicy.recommendedConfiguration
+    guard intelConfig.cpuElevatedThreshold == 20.0 else {
+        return CheckResult(
+            name: checkName,
+            passed: false,
+            error: "Intel should use conservative config with 20% CPU threshold"
+        )
+    }
+
+    return CheckResult(name: checkName, passed: true)
+}
