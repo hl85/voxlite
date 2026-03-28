@@ -337,6 +337,11 @@ private extension MainWindowView {
         VStack(alignment: .leading, spacing: 12) {
             sectionCard(title: "运行状态") {
                 VStack(spacing: 8) {
+                    if !model.processingFeedbackText.isEmpty {
+                        statusItemRow("处理反馈", model.processingFeedbackText)
+                    }
+                    statusItemRow("语音识别就绪态", model.speechStatus)
+                    statusItemRow("Foundation Model 就绪态", model.foundationModelStatus)
                     statusItemRow("语音识别模型 (STT)", model.sttModelName)
                     statusItemRow("LLM 模型", model.llmModelName)
                     statusItemRow("清洗策略", model.cleanStyleTag)
@@ -777,7 +782,7 @@ private extension MainWindowView {
         if raw.contains("已就绪") || raw.contains("正常") || raw.contains("成功") || raw == "无" {
             return .ok
         }
-        if raw.contains("等待") || raw.contains("提示") || raw.contains("请开启 Apple Intelligence") || raw.contains("待处理") || raw.contains("待授权") || raw.contains("Idle") || raw.contains("关闭") {
+        if raw.contains("等待") || raw.contains("提示") || raw.contains("未就绪") || raw.contains("下载中") || raw.contains("安装中") || raw.contains("请开启 Apple Intelligence") || raw.contains("待处理") || raw.contains("待授权") || raw.contains("Idle") || raw.contains("关闭") {
             return .warn
         }
         if raw.contains("终止") || raw.contains("不支持") || raw.contains("不可用") {

@@ -67,17 +67,48 @@ public struct RetryPolicy: Equatable, Sendable {
     public static let remoteModelDefault = RetryPolicy(timeoutMs: 10_000, maxRetries: 1)
 }
 
+public struct ContextEnrichment: Codable, Equatable, Sendable {
+    public let appName: String?
+    public let isEditable: Bool?
+    public let focusedRole: String?
+    public let vocabularyBias: [String: String]
+
+    public init(
+        appName: String? = nil,
+        isEditable: Bool? = nil,
+        focusedRole: String? = nil,
+        vocabularyBias: [String: String] = [:]
+    ) {
+        self.appName = appName
+        self.isEditable = isEditable
+        self.focusedRole = focusedRole
+        self.vocabularyBias = vocabularyBias
+    }
+
+    public var isEmpty: Bool {
+        appName == nil && isEditable == nil && focusedRole == nil && vocabularyBias.isEmpty
+    }
+}
+
 public struct ContextInfo: Equatable, Sendable {
     public let bundleId: String
     public let appCategory: AppCategory
     public let inputRole: String
     public let locale: String
+    public let enrich: ContextEnrichment?
 
-    public init(bundleId: String, appCategory: AppCategory, inputRole: String, locale: String) {
+    public init(
+        bundleId: String,
+        appCategory: AppCategory,
+        inputRole: String,
+        locale: String,
+        enrich: ContextEnrichment? = nil
+    ) {
         self.bundleId = bundleId
         self.appCategory = appCategory
         self.inputRole = inputRole
         self.locale = locale
+        self.enrich = enrich
     }
 }
 

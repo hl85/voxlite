@@ -5,6 +5,135 @@ import VoxLiteInput
 import VoxLiteOutput
 import VoxLiteSystem
 
+public enum SpeechReadinessState: Equatable, Sendable {
+    public enum FailureReason: Equatable, Sendable {
+        case permissionRequired
+        case recordingUnavailable
+        case recordingTooShort
+        case assetDownloadFailed
+        case modelInstallFailed
+        case unavailable
+    }
+
+    case notReady
+    case downloading
+    case installing
+    case ready
+    case unavailable(FailureReason)
+    case terminated(FailureReason)
+
+    public var statusText: String {
+        switch self {
+        case .notReady:
+            return "未就绪：待录音"
+        case .downloading:
+            return "下载中：语音资产"
+        case .installing:
+            return "安装中：语音模型"
+        case .ready:
+            return "已就绪"
+        case .unavailable(.permissionRequired):
+            return "不可用：权限未就绪"
+        case .unavailable(.recordingUnavailable):
+            return "不可用：录音设备忙碌"
+        case .unavailable(.assetDownloadFailed):
+            return "不可用：语音资产下载失败"
+        case .unavailable(.modelInstallFailed):
+            return "不可用：语音模型安装失败"
+        case .unavailable(.recordingTooShort):
+            return "不可用：录音过短"
+        case .unavailable(.unavailable):
+            return "不可用：语音识别暂不可用"
+        case .terminated(.recordingTooShort):
+            return "终止：录音过短"
+        case .terminated(.assetDownloadFailed):
+            return "终止：语音资产下载失败"
+        case .terminated(.modelInstallFailed):
+            return "终止：语音模型安装失败"
+        case .terminated(.recordingUnavailable):
+            return "终止：录音设备忙碌"
+        case .terminated(.permissionRequired):
+            return "终止：权限未就绪"
+        case .terminated(.unavailable):
+            return "终止：语音识别不可用"
+        }
+    }
+}
+
+public enum FoundationModelReadinessState: Equatable, Sendable {
+    public enum FailureReason: Equatable, Sendable {
+        case modelLoading
+        case appleIntelligenceDisabled
+        case deviceNotEligible
+        case unavailable
+    }
+
+    case ready
+    case notReady(FailureReason)
+    case unavailable(FailureReason)
+    case terminated(FailureReason)
+
+    public var statusText: String {
+        switch self {
+        case .ready:
+            return "已就绪"
+        case .notReady(.modelLoading):
+            return "未就绪：Foundation Model 正在加载"
+        case .notReady(.appleIntelligenceDisabled):
+            return "未就绪：Apple Intelligence 未开启"
+        case .notReady(.deviceNotEligible):
+            return "未就绪：当前设备不支持"
+        case .notReady(.unavailable):
+            return "未就绪：Foundation Model 暂不可用"
+        case .unavailable(.appleIntelligenceDisabled):
+            return "不可用：请先开启 Apple Intelligence"
+        case .unavailable(.modelLoading):
+            return "不可用：Foundation Model 尚未完成加载"
+        case .unavailable(.unavailable):
+            return "不可用：Foundation Model 暂时不可用"
+        case .unavailable(.deviceNotEligible):
+            return "不可用：当前设备不支持 Apple Foundation Model"
+        case .terminated(.deviceNotEligible):
+            return "终止：当前设备不支持 Apple Foundation Model"
+        case .terminated(.appleIntelligenceDisabled):
+            return "终止：Apple Intelligence 未开启"
+        case .terminated(.modelLoading):
+            return "终止：Foundation Model 未完成加载"
+        case .terminated(.unavailable):
+            return "终止：Foundation Model 不可用"
+        }
+    }
+}
+
+public enum ProcessingFeedbackState: Equatable, Sendable {
+    case idle
+    case preparing
+    case transcribing
+    case cleaning
+    case injecting
+    case completed
+    case failed
+
+    public var defaultText: String {
+        switch self {
+        case .idle:
+            return ""
+        case .preparing:
+            return "准备中..."
+        case .transcribing:
+            return "转写中..."
+        case .cleaning:
+            return "清洗中..."
+        case .injecting:
+            return "注入中..."
+        case .completed:
+            return "已完成"
+        case .failed:
+            return "处理失败"
+        }
+    }
+}
+
 @MainActor
 public final class AppViewModel: ObservableObject {
     @Published public var showOnboarding: Bool = true
@@ -26,7 +155,11 @@ public final class AppViewModel: ObservableObject {
     @Published public var hotKeySettings: HotKeySettings = HotKeySettings()
     @Published public var speechStatus: String = "未知"
     @Published public var foundationModelStatus: String = "未知"
+    @Published public var speechReadiness: SpeechReadinessState = .notReady
+    @Published public var foundationModelReadiness: FoundationModelReadinessState = .unavailable(.unavailable)
     @Published public var foundationModelAvailability: FoundationModelAvailabilityState = .unavailable
+    @Published public var processingFeedbackState: ProcessingFeedbackState = .idle
+    @Published public var processingFeedbackText: String = ""
     @Published public var sttModelName: String = ""
     @Published public var llmModelName: String = ""
     @Published public var cleanStyleTag: String = "未处理"
@@ -36,6 +169,8 @@ public final class AppViewModel: ObservableObject {
     @Published public var appSettings: AppSettings = FileAppSettingsStore.defaultSettings
     @Published public var menuBarSummary: String = ""
     @Published public var trialRunPassed: Bool = false
+
+    public var onReleaseResources: (() async -> Void)?
 
     private var pipeline: VoicePipeline
     private let permissions: PermissionManaging
@@ -81,9 +216,26 @@ public final class AppViewModel: ObservableObject {
         self.skillSnapshot = self.skillStore.loadSkills()
         self.menuBarSummary = historyItems.first?.outputText ?? ""
         self.hotKeySettings.conflictMessage = ""
+        configurePipelineObserver()
         refreshFoundationModelAvailability()
         refreshModelNames()
         configureMonitor()
+    }
+
+    public func resetResources() async {
+        await pipeline.resetResources()
+    }
+
+    public func handleMemoryWarning() {
+        Task { @MainActor in
+            await onReleaseResources?()
+        }
+    }
+
+    public func handleDidEnterBackground() {
+        Task { @MainActor in
+            await onReleaseResources?()
+        }
     }
 
     public func startMonitor() {
@@ -272,6 +424,7 @@ public final class AppViewModel: ObservableObject {
         let runtimeChain = runtimeChainReloader()
         pipeline = runtimeChain.pipeline
         foundationModelAvailabilityProvider = runtimeChain.availabilityProvider
+        configurePipelineObserver()
         appSettings = settingsStore.loadSettings()
         refreshModelNames()
         refreshFoundationModelAvailability()
@@ -294,6 +447,7 @@ public final class AppViewModel: ObservableObject {
         actionTitle = ""
         canRetry = false
         stateText = "Idle"
+        setProcessingFeedback(.idle)
     }
 
     public func simulatePressForTesting() async {
@@ -355,30 +509,35 @@ public final class AppViewModel: ObservableObject {
         )
         lastError = ""
         stateText = "Idle"
+        applySpeechReadiness(.notReady)
         cleanedText = ""
         activeSessionId = nil
         canRetry = false
         actionTitle = ""
+        setProcessingFeedback(.idle)
     }
 
     private func handlePress() async {
         permissionSnapshot = permissions.currentPermissionSnapshot()
         refreshFoundationModelAvailability()
-        speechStatus = "待录音"
+        applySpeechReadiness(.notReady)
         guard permissionSnapshot.allGranted else {
             stateText = "Failed"
+            setProcessingFeedback(.idle)
             showOnboarding = true
             updateOnboardingStep()
             lastError = "权限未就绪，请先完成授权"
             actionTitle = "打开系统设置"
             recommendedSettingItem = missingPermissionItem()
             canRetry = false
+            applySpeechReadiness(.unavailable(.permissionRequired))
             return
         }
         do {
             let sessionId = try pipeline.startRecording()
             activeSessionId = sessionId
             stateText = "Recording"
+            setProcessingFeedback(.idle)
             lastError = ""
             actionTitle = ""
             recommendedSettingItem = nil
@@ -387,19 +546,21 @@ public final class AppViewModel: ObservableObject {
         } catch {
             if let voxError = error as? VoxErrorCode, voxError == .recordingUnavailable {
                 stateText = "Idle"
+                setProcessingFeedback(.idle)
                 lastError = "录音设备忙碌或触发过快，请稍后重试"
                 actionTitle = ""
                 recommendedSettingItem = nil
                 canRetry = false
-                speechStatus = "录音不可用"
+                applySpeechReadiness(.unavailable(.recordingUnavailable))
                 return
             }
             stateText = "Failed"
+            setProcessingFeedback(.idle)
             lastError = "权限或录音不可用"
             actionTitle = "打开系统设置"
             recommendedSettingItem = .microphone
             canRetry = false
-            speechStatus = "异常"
+            applySpeechReadiness(.unavailable(.unavailable))
         }
     }
 
@@ -408,12 +569,15 @@ public final class AppViewModel: ObservableObject {
         showRecordingAnimation = false
         do {
             stateText = "Processing"
+            applySpeechReadiness(.installing)
+            setProcessingFeedback(.preparing)
             let result = try await pipeline.stopRecordingAndProcess(sessionId: activeSessionId)
             stateText = result.inject.success ? "Done" : "Failed"
             cleanedText = result.clean.cleanText
             trialRunPassed = result.inject.success
             cleanStyleTag = result.clean.styleTag
-            speechStatus = result.transcript.success ? "正常（端侧）" : "异常"
+            setProcessingFeedback(result.inject.success ? .completed : .failed)
+            applySpeechReadiness(result.transcript.success ? .ready : .unavailable(.unavailable))
             refreshFoundationModelAvailability()
             if showOnboarding && trialRunPassed && permissionSnapshot.allGranted {
                 updateOnboardingStep()
@@ -439,7 +603,8 @@ public final class AppViewModel: ObservableObject {
                 lastError = "按住快捷键稍久一点再说话"
                 actionTitle = ""
                 canRetry = false
-                speechStatus = "录音过短/不可用"
+                applySpeechReadiness(.terminated(.recordingTooShort))
+                setProcessingFeedback(.failed, text: "录音过短，已终止")
                 refreshFoundationModelAvailability()
                 pipeline.resetToIdle()
                 self.activeSessionId = nil
@@ -448,10 +613,13 @@ public final class AppViewModel: ObservableObject {
             stateText = "Failed"
             if let voxError = error as? VoxErrorCode, voxError == .timeout {
                 lastError = "处理超时，请重试"
+                setProcessingFeedback(.failed, text: "处理超时")
             } else if let voxError = error as? VoxErrorCode, voxError == .retryExhausted {
                 lastError = "处理失败（重试耗尽），请查看日志定位阶段"
+                setProcessingFeedback(.failed, text: "处理失败（重试耗尽）")
             } else {
                 lastError = "处理失败，请重试"
+                setProcessingFeedback(.failed)
             }
             updateModelStatusForError(error)
             actionTitle = "重试本次"
@@ -478,27 +646,27 @@ public final class AppViewModel: ObservableObject {
 
     private func updateModelStatusForError(_ error: Error) {
         guard let voxError = error as? VoxErrorCode else {
-            speechStatus = "异常"
+            applySpeechReadiness(.unavailable(.unavailable))
             return
         }
         switch voxError {
         case .permissionSpeechDenied, .transcriptionUnavailable:
-            speechStatus = "异常"
+            applySpeechReadiness(.unavailable(.permissionRequired))
         case .retryExhausted, .timeout:
-            speechStatus = "异常"
+            applySpeechReadiness(.unavailable(.unavailable))
         case .cleaningUnavailable:
-            speechStatus = "正常"
+            applySpeechReadiness(.ready)
         case .injectionFailed:
-            speechStatus = "正常"
+            applySpeechReadiness(.ready)
         default:
-            speechStatus = "未知"
+            applySpeechReadiness(.notReady)
         }
     }
 
     private func refreshFoundationModelAvailability() {
         let state = foundationModelAvailabilityProvider.foundationModelAvailability()
         foundationModelAvailability = state
-        foundationModelStatus = foundationModelStatusText(state)
+        applyFoundationModelReadiness(Self.foundationModelReadiness(from: state))
     }
 
     private func refreshModelNames() {
@@ -530,19 +698,61 @@ public final class AppViewModel: ObservableObject {
         return "清洗模型不可用，已降级为规则清洗"
     }
 
-    private func foundationModelStatusText(_ state: FoundationModelAvailabilityState) -> String {
+    static func foundationModelReadiness(from state: FoundationModelAvailabilityState) -> FoundationModelReadinessState {
         switch state {
         case .available:
-            return "已就绪"
+            return .ready
         case .modelNotReady:
-            return "等待模型就绪"
+            return .notReady(.modelLoading)
         case .appleIntelligenceNotEnabled:
-            return "请开启 Apple Intelligence"
+            return .unavailable(.appleIntelligenceDisabled)
         case .deviceNotEligible:
-            return "设备不支持（终止）"
+            return .terminated(.deviceNotEligible)
         case .unavailable:
-            return "不可用（终止）"
+            return .unavailable(.unavailable)
         }
+    }
+
+    private func applySpeechReadiness(_ readiness: SpeechReadinessState) {
+        speechReadiness = readiness
+        speechStatus = readiness.statusText
+    }
+
+    private func configurePipelineObserver() {
+        pipeline.stageObserver = { [weak self] event in
+            self?.handlePipelineStageEvent(event)
+        }
+    }
+
+    private func handlePipelineStageEvent(_ event: VoicePipeline.StageEvent) {
+        guard event.phase == .started else { return }
+        switch event.stage {
+        case .assetCheck, .assetInstall, .analyzerCreate, .analyzerWarmup:
+            setProcessingFeedback(.preparing)
+        case .transcribe:
+            setProcessingFeedback(.transcribing)
+        case .clean:
+            setProcessingFeedback(.cleaning)
+        case .inject:
+            setProcessingFeedback(.injecting)
+        }
+    }
+
+    private func setProcessingFeedback(_ state: ProcessingFeedbackState, text: String? = nil) {
+        processingFeedbackState = state
+        processingFeedbackText = text ?? state.defaultText
+        if state == .idle {
+            if resourceHint == processingFeedbackText {
+                resourceHint = ""
+            }
+            return
+        }
+        resourceHint = processingFeedbackText
+    }
+
+    private func applyFoundationModelReadiness(_ readiness: FoundationModelReadinessState) {
+        foundationModelReadiness = readiness
+        foundationModelStatus = readiness.statusText
     }
 
     private func appendHistory(from result: ProcessResult) {
@@ -613,6 +823,7 @@ public enum VoxLiteFeatureBootstrap {
         settings: AppSettings,
         keychain: KeychainStoring,
         logger: LoggerServing,
+        performanceSampler: PerformanceSampler? = nil,
         onDeviceSpeechAvailable: Bool = VoxLiteFeatureBootstrap.onDeviceSpeechAvailable
     ) -> (transcriber: any SpeechTranscribing, usesRemoteSTT: Bool) {
         if settings.speechModel.useRemote,
@@ -640,7 +851,8 @@ public enum VoxLiteFeatureBootstrap {
         }
         if onDeviceSpeechAvailable {
             if #available(macOS 26.0, iOS 26.0, *) {
-                return (OnDeviceSpeechTranscriber(logger: logger), false)
+                let policy = ModelRetentionPolicy(deviceTier: DeviceTierDetector.detect())
+                return (OnDeviceSpeechTranscriber(logger: logger, performanceSampler: performanceSampler, retentionPolicy: policy), false)
             }
         }
         logger.warn("bootstrap on-device transcriber unavailable on current platform, using compatibility fallback")
@@ -654,14 +866,15 @@ public enum VoxLiteFeatureBootstrap {
         keychain: KeychainStoring,
         permissions: PermissionManaging,
         logger: LoggerServing,
-        metrics: MetricsServing
+        metrics: MetricsServing,
+        performanceSampler: PerformanceSampler? = nil
     ) -> (pipeline: VoicePipeline, availabilityProvider: any FoundationModelAvailabilityProviding) {
         let settings = settingsStore.loadSettings()
         let stateMachine = VoxStateMachine()
         let audio = AudioCaptureService(logger: logger)
         var usesRemoteLLM = false
 
-        let transcriberSelection = makeTranscriber(settings: settings, keychain: keychain, logger: logger)
+        let transcriberSelection = makeTranscriber(settings: settings, keychain: keychain, logger: logger, performanceSampler: performanceSampler)
         let transcriber = transcriberSelection.transcriber
         let usesRemoteSTT = transcriberSelection.usesRemoteSTT
 
@@ -731,7 +944,8 @@ public enum VoxLiteFeatureBootstrap {
             keychain: keychain,
             permissions: permissions,
             logger: logger,
-            metrics: metrics
+            metrics: metrics,
+            performanceSampler: performanceSampler
         )
 
         let viewModel = AppViewModel(
@@ -750,10 +964,16 @@ public enum VoxLiteFeatureBootstrap {
                     keychain: keychain,
                     permissions: permissions,
                     logger: logger,
-                    metrics: metrics
+                    metrics: metrics,
+                    performanceSampler: performanceSampler
                 )
             }
         )
+        
+        viewModel.onReleaseResources = { [weak viewModel] in
+            await viewModel?.resetResources()
+        }
+        
         return viewModel
     }
 }

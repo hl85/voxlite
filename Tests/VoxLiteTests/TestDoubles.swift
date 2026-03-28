@@ -20,12 +20,16 @@ struct TestAudioCapture: AudioCaptureServing {
     var startResult: Result<UUID, Error> = .success(UUID())
     var stopElapsedMs: Int = 1_200
     var stopFileContents = Data("stub".utf8)
+    var stopResult: Result<Data, Error>?
 
     func startRecording() throws -> UUID {
         try startResult.get()
     }
 
     func stopRecording(sessionId: UUID) throws -> Data {
+        if let stopResult {
+            return try stopResult.get()
+        }
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("voxlite-test-\(sessionId.uuidString)")
             .appendingPathExtension("caf")
@@ -38,9 +42,13 @@ struct TestTranscriber: SpeechTranscribing {
     var result: Result<SpeechTranscription, Error> = .success(
         SpeechTranscription(text: "原始转写文本", latencyMs: 10, usedOnDevice: true)
     )
+    var delayNanos: UInt64 = 0
 
     func transcribe(audioFileURL: URL, elapsedMs: Int?) async throws -> SpeechTranscription {
-        try result.get()
+        if delayNanos > 0 {
+            try await Task.sleep(nanoseconds: delayNanos)
+        }
+        return try result.get()
     }
 }
 
@@ -74,6 +82,35 @@ final class TestInjector: TextInjecting {
         let index = min(callCount, results.count - 1)
         callCount += 1
         return results[index]
+    }
+}
+
+@MainActor
+final class TestTranscriberWithObservability: SpeechTranscribing, VoicePipelineStageReporting {
+    var stageObserver: VoicePipeline.StageObserver?
+    let delayNanos: UInt64
+    let latencyMs: Int
+    let text: String
+
+    init(delayNanos: UInt64 = 0, latencyMs: Int = 10, text: String = "原始转写文本") {
+        self.delayNanos = delayNanos
+        self.latencyMs = latencyMs
+        self.text = text
+    }
+
+    func transcribe(audioFileURL: URL, elapsedMs: Int?) async throws -> SpeechTranscription {
+        stageObserver?(.init(stage: .assetCheck, phase: .started))
+        stageObserver?(.init(stage: .assetCheck, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        stageObserver?(.init(stage: .assetInstall, phase: .started))
+        stageObserver?(.init(stage: .assetInstall, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        stageObserver?(.init(stage: .analyzerCreate, phase: .started))
+        stageObserver?(.init(stage: .analyzerCreate, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        stageObserver?(.init(stage: .analyzerWarmup, phase: .started))
+        stageObserver?(.init(stage: .analyzerWarmup, phase: .completed, success: true, errorCode: nil, latencyMs: 1))
+        if delayNanos > 0 {
+            try await Task.sleep(nanoseconds: delayNanos)
+        }
+        return SpeechTranscription(text: text, latencyMs: latencyMs, usedOnDevice: true)
     }
 }
 
@@ -202,9 +239,9 @@ struct TestAvailabilityProvider: FoundationModelAvailabilityProviding {
 func makePipeline(
     stateMachine: TestStateStore = TestStateStore(),
     audioCapture: TestAudioCapture = TestAudioCapture(),
-    transcriber: TestTranscriber = TestTranscriber(),
-    contextResolver: TestContextResolver = TestContextResolver(),
-    cleaner: TestCleaner = TestCleaner(
+    transcriber: any SpeechTranscribing = TestTranscriber(),
+    contextResolver: any ContextResolving = TestContextResolver(),
+    cleaner: any TextCleaning = TestCleaner(
         result: CleanResult(
             cleanText: "清洗后文本",
             confidence: 0.9,

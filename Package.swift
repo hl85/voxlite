@@ -11,6 +11,9 @@ let package = Package(
         .executable(name: "VoxLiteApp", targets: ["VoxLiteApp"]),
         .executable(name: "VoxLiteSelfCheck", targets: ["VoxLiteSelfCheck"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-testing.git", from: "0.9.0")
+    ],
     targets: [
         .target(
             name: "VoxLiteDomain"
@@ -66,6 +69,7 @@ let package = Package(
         .testTarget(
             name: "VoxLiteTests",
             dependencies: [
+                .product(name: "Testing", package: "swift-testing"),
                 "VoxLiteDomain",
                 "VoxLiteCore",
                 "VoxLiteInput",

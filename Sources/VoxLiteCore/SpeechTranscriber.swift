@@ -4,6 +4,11 @@ import Speech
 import VoxLiteDomain
 import VoxLiteSystem
 
+@MainActor
+public protocol VoicePipelineStageReporting: AnyObject {
+    var stageObserver: VoicePipeline.StageObserver? { get set }
+}
+
 public final class UnsupportedPlatformSpeechTranscriber: SpeechTranscribing {
     private let logger: LoggerServing
 
@@ -34,6 +39,8 @@ public protocol SpeechAuthorizationServing: Sendable {
 @available(macOS 26.0, iOS 26.0, *)
 public protocol SpeechAnalyzerSessionServing: Sendable {
     func supportedLocale(equivalentTo locale: Locale) async -> Locale?
+    func ensureAssets(for locale: Locale, onDeviceOnly: Bool) async throws
+    func warmupAnalyzer(for locale: Locale, onDeviceOnly: Bool) async throws
     func transcribeFile(url: URL, locale: Locale, onDeviceOnly: Bool) async throws -> String
 }
 
@@ -58,14 +65,25 @@ public struct SystemSpeechAnalyzerSession: SpeechAnalyzerSessionServing {
         await SpeechTranscriber.supportedLocale(equivalentTo: locale)
     }
 
+    public func ensureAssets(for locale: Locale, onDeviceOnly: Bool) async throws {
+        let preset: SpeechTranscriber.Preset = onDeviceOnly ? .transcription : .progressiveTranscription
+        let transcriber = SpeechTranscriber(locale: locale, preset: preset)
+        if let installationRequest = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+            try await installationRequest.downloadAndInstall()
+        }
+    }
+
+    public func warmupAnalyzer(for locale: Locale, onDeviceOnly: Bool) async throws {
+        let preset: SpeechTranscriber.Preset = onDeviceOnly ? .transcription : .progressiveTranscription
+        let transcriber = SpeechTranscriber(locale: locale, preset: preset)
+        _ = SpeechAnalyzer(modules: [transcriber])
+    }
+
     public func transcribeFile(url: URL, locale: Locale, onDeviceOnly: Bool) async throws -> String {
         let preset: SpeechTranscriber.Preset = onDeviceOnly ? .transcription : .progressiveTranscription
         let transcriber = SpeechTranscriber(locale: locale, preset: preset)
         guard SpeechTranscriber.isAvailable else {
             throw SpeechTranscriptionError.transcriberUnavailable
-        }
-        if let installationRequest = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-            try await installationRequest.downloadAndInstall()
         }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let audioFile = try AVAudioFile(forReading: url)
@@ -82,25 +100,44 @@ public struct SystemSpeechAnalyzerSession: SpeechAnalyzerSessionServing {
 }
 
 @available(macOS 26.0, iOS 26.0, *)
-public final class OnDeviceSpeechTranscriber: SpeechTranscribing {
+public final class OnDeviceSpeechTranscriber: SpeechTranscribing, VoicePipelineStageReporting {
     private let logger: LoggerServing
     private let locale: Locale
     private let authorizationService: SpeechAuthorizationServing
     private let analyzerSession: SpeechAnalyzerSessionServing
+    private let warmupService: SpeechTranscriberWarmupService
+    private let performanceSampler: PerformanceSampler?
+    private let retentionPolicy: ModelRetentionPolicy?
+
+    public var stageObserver: VoicePipeline.StageObserver?
 
     public init(
         logger: LoggerServing,
         localeIdentifier: String = "zh-CN",
         authorizationService: SpeechAuthorizationServing = SystemSpeechAuthorizationService(),
-        analyzerSession: SpeechAnalyzerSessionServing = SystemSpeechAnalyzerSession()
+        analyzerSession: SpeechAnalyzerSessionServing = SystemSpeechAnalyzerSession(),
+        warmupService: SpeechTranscriberWarmupService? = nil,
+        performanceSampler: PerformanceSampler? = nil,
+        retentionPolicy: ModelRetentionPolicy? = nil
     ) {
         self.logger = logger
-        locale = Locale(identifier: localeIdentifier)
+        self.locale = Locale(identifier: localeIdentifier)
         self.authorizationService = authorizationService
         self.analyzerSession = analyzerSession
+        self.warmupService = warmupService ?? SpeechTranscriberWarmupService(
+            logger: logger,
+            analyzerSession: analyzerSession
+        )
+        self.performanceSampler = performanceSampler
+        self.retentionPolicy = retentionPolicy
     }
 
     public func transcribe(audioFileURL: URL, elapsedMs: Int?) async throws -> SpeechTranscription {
+        defer {
+            Task {
+                await self.evaluateRetentionPolicy()
+            }
+        }
         let start = Date()
         logger.info("transcriber begin audioFile=\(audioFileURL.lastPathComponent)")
         guard FileManager.default.fileExists(atPath: audioFileURL.path(percentEncoded: false)) else {
@@ -124,6 +161,7 @@ public final class OnDeviceSpeechTranscriber: SpeechTranscribing {
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: audioFileURL.path)[.size] as? NSNumber)?.intValue ?? -1
         logger.info("transcriber audio file size=\(fileSize) bytes")
         do {
+            try await prepareOnDevicePipeline(locale: supportedLocale)
             let transcript = try await recognizeFromFile(
                 url: audioFileURL,
                 locale: supportedLocale,
@@ -158,8 +196,48 @@ public final class OnDeviceSpeechTranscriber: SpeechTranscribing {
         throw SpeechTranscriptionError.noResult
     }
 
+    public func resetResources() async {
+        logger.info("transcriber manually resetting resources")
+        await warmupService.deallocate(locale: locale)
+    }
+
+    private func evaluateRetentionPolicy() async {
+        guard let sampler = performanceSampler, let policy = retentionPolicy else { return }
+        let snapshot = sampler.sample()
+        let decision = policy.evaluate(snapshot: snapshot)
+        
+        if decision.shouldReleaseAnalyzer || decision.shouldReleaseAssets {
+            logger.info("transcriber retention policy triggered release decision=\(decision.description)")
+            await warmupService.deallocate(locale: locale)
+        }
+    }
+
     private func elapsed(_ from: Date) -> Int {
         Int(Date().timeIntervalSince(from) * 1000)
+    }
+
+    private func prepareOnDevicePipeline(locale: Locale) async throws {
+        stageObserver?(.init(stage: .assetCheck, phase: .started))
+        stageObserver?(.init(stage: .assetInstall, phase: .started))
+        stageObserver?(.init(stage: .analyzerCreate, phase: .started))
+        stageObserver?(.init(stage: .analyzerWarmup, phase: .started))
+        let preparationStart = Date()
+        do {
+            let disposition = try await warmupService.prepareForRecognition(locale: locale)
+            let latency = elapsed(preparationStart)
+            logger.info("transcriber warmup disposition=\(String(describing: disposition)) locale=\(locale.identifier)")
+            stageObserver?(.init(stage: .assetCheck, phase: .completed, success: true, errorCode: nil, latencyMs: latency))
+            stageObserver?(.init(stage: .assetInstall, phase: .completed, success: true, errorCode: nil, latencyMs: latency))
+            stageObserver?(.init(stage: .analyzerCreate, phase: .completed, success: true, errorCode: nil, latencyMs: latency))
+            stageObserver?(.init(stage: .analyzerWarmup, phase: .completed, success: true, errorCode: nil, latencyMs: latency))
+        } catch {
+            let latency = elapsed(preparationStart)
+            stageObserver?(.init(stage: .assetCheck, phase: .completed, success: false, errorCode: .transcriptionUnavailable, latencyMs: latency))
+            stageObserver?(.init(stage: .assetInstall, phase: .completed, success: false, errorCode: .transcriptionUnavailable, latencyMs: latency))
+            stageObserver?(.init(stage: .analyzerCreate, phase: .completed, success: false, errorCode: .transcriptionUnavailable, latencyMs: latency))
+            stageObserver?(.init(stage: .analyzerWarmup, phase: .completed, success: false, errorCode: .transcriptionUnavailable, latencyMs: latency))
+            throw error
+        }
     }
 
     private func recognizeFromFile(
@@ -190,6 +268,7 @@ public final class OnDeviceSpeechTranscriber: SpeechTranscribing {
         let base = max(3.0, min(12.0, Double(elapsedMs) / 1000.0 * 0.45))
         return onDeviceOnly ? base : max(base, 6.0)
     }
+
 }
 
 @available(macOS 26.0, iOS 26.0, *)

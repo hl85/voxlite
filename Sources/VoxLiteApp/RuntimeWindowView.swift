@@ -91,6 +91,12 @@ private extension RuntimeWindowView {
                         .foregroundStyle(Color(hex: "#9cabd7"))
                         .padding(.horizontal, 16)
                 }
+                if !model.processingFeedbackText.isEmpty {
+                    Text(model.processingFeedbackText)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color(hex: "#f4f7ff"))
+                        .padding(.horizontal, 16)
+                }
                 Divider().opacity(0.15).padding(.horizontal, 16)
                 Button("退出") {
                     NSApplication.shared.terminate(nil)
@@ -154,9 +160,11 @@ private extension RuntimeWindowView {
     }
 
     func statusColor(_ status: String) -> Color {
-        if status.contains("正常") { return Color(hex: "#4cd08d") }
-        if status.contains("异常") || status.contains("不可用") { return Color(hex: "#ff6a7c") }
-        if status.contains("降级") { return Color(hex: "#ffbf53") }
+        if status.contains("已就绪") || status.contains("正常") { return Color(hex: "#4cd08d") }
+        if status.contains("下载中") || status.contains("安装中") || status.contains("未就绪") || status.contains("等待") || status.contains("降级") {
+            return Color(hex: "#ffbf53")
+        }
+        if status.contains("异常") || status.contains("不可用") || status.contains("终止") { return Color(hex: "#ff6a7c") }
         return Color(hex: "#9cabd7")
     }
 
@@ -218,9 +226,14 @@ private extension RuntimeWindowView {
     // MARK: Status Section
     var statusSection: some View {
         sectionCard(title: "组件状态") {
-            HStack(spacing: 16) {
-                componentCard("Speech 识别", status: model.speechStatus)
-                componentCard("Foundation Model", status: model.foundationModelStatus)
+            VStack(alignment: .leading, spacing: 12) {
+                if !model.processingFeedbackText.isEmpty {
+                    componentCard("处理反馈", status: model.processingFeedbackText)
+                }
+                HStack(spacing: 16) {
+                    componentCard("Speech 识别", status: model.speechStatus)
+                    componentCard("Foundation Model", status: model.foundationModelStatus)
+                }
             }
         }
     }
