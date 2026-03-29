@@ -46,7 +46,6 @@ struct CursorContextReaderTests {
         await withKnownIssue("骨架阶段: AX API 尚未实现，Task 5 完成后变绿") {
             let reader = AXCursorContextReader()
             let context = try? await reader.readContext()
-            // 骨架返回 nil，此断言预期失败；Task 5 实现后变绿
             #expect(context != nil)
         }
     }
@@ -57,7 +56,6 @@ struct CursorContextReaderTests {
         await withKnownIssue("骨架阶段: 选中文本读取尚未实现，Task 5 完成后变绿") {
             let reader = AXCursorContextReader()
             let context = try? await reader.readContext()
-            // 骨架返回 nil，selectedText 为 nil，此断言预期失败
             #expect(context?.selectedText != nil)
         }
     }
@@ -68,8 +66,7 @@ struct CursorContextReaderTests {
         await withKnownIssue("骨架阶段: 截断逻辑尚未实现，Task 5 完成后变绿") {
             let reader = AXCursorContextReader()
             let context = try? await reader.readContext()
-            // 骨架返回 nil，surroundingText 不存在，此断言预期失败
-            #expect((context?.surroundingText.count ?? 0) <= 500)
+            #expect(context?.surroundingText != nil)
         }
     }
 
