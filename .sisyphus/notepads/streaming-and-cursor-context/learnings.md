@@ -225,3 +225,26 @@ Session: ses_*(compaction 后恢复)
 - `swift test --filter AppViewModelTests`: 16/16 PASS ✅
 - 全量测试 `swift test`: 141 tests PASS (3 known issues) ✅
 - `lsp_diagnostics`: ZERO errors（.build/checkouts 噪音不属于项目代码）✅
+
+## [2026-03-29] Task 13: RuntimeWindowView 实时转写预览 UI
+
+### 实现要点
+- 在 `body` 的 VStack 中，recordingBanner 之后、sceneSection 之前插入三重条件渲染：
+  `if model.streamingMode != .off && model.isStreamingActive && !model.partialText.isEmpty`
+- `.transition(.opacity)` 配合 `.animation(.easeInOut(duration: 0.3), value: model.isStreamingActive)` 实现淡出
+- `partialPreviewSection` 放在 `private extension RuntimeWindowView` 中，插入位置在 `recordingBanner` 之前（MARK 顺序：Recording Banner → partialPreviewSection → Recording Banner 实体）
+- 预览文字：`.font(.system(size: 14, weight: .light)).italic().foregroundStyle(Color(hex: "#9cabd7"))`
+- 背景：`Color(hex: "#1a2b50").opacity(0.5)` + `cornerRadius(8)` + `.padding(.all, 12)`
+- 高度限制：`ScrollView { Text(...) }.frame(maxHeight: 120)` 避免长文本占满屏幕
+- 标题行使用 `Text("转写中…")` 配合深色系 `#9cabd7` + `.textCase(.uppercase)` + `.tracking(0.8)`，与 `sectionCard` 标题风格一致
+
+### SwiftUI 动画注意事项
+- `@ViewBuilder` 内的条件渲染 (`if ... { ... }`) 配合 `.transition` 和 `.animation` 即可实现状态变化时的自动淡入淡出
+- `value: model.isStreamingActive` 确保只在 isStreamingActive 变化时触发动画，而非每次 body 重建
+
+### 验证结果
+- `swift build`: Build complete ✅
+- `grep "partialText"`: line 186 ✅
+- `grep "isStreamingActive"`: lines 28, 31 ✅
+- `grep "streamingMode"`: line 28（.off 隔离）✅
+- `lsp_diagnostics`: ZERO errors ✅

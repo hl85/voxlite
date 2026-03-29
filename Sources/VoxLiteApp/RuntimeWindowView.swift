@@ -24,6 +24,12 @@ struct RuntimeWindowView: View {
                     if model.showRecordingAnimation {
                         recordingBanner
                     }
+                    // 实时转写预览区域：仅在非 off 模式且流式激活且有临时文本时显示
+                    if model.streamingMode != .off && model.isStreamingActive && !model.partialText.isEmpty {
+                        partialPreviewSection
+                            .transition(.opacity)
+                            .animation(.easeInOut(duration: 0.3), value: model.isStreamingActive)
+                    }
                     sceneSection
                     statusSection
                     resultSection
@@ -166,6 +172,29 @@ private extension RuntimeWindowView {
         }
         if status.contains("异常") || status.contains("不可用") || status.contains("终止") { return Color(hex: "#ff6a7c") }
         return Color(hex: "#9cabd7")
+    }
+
+    // MARK: Partial Preview Section
+    var partialPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("转写中…")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color(hex: "#9cabd7"))
+                .textCase(.uppercase)
+                .tracking(0.8)
+            ScrollView {
+                Text(model.partialText)
+                    .font(.system(size: 14, weight: .light))
+                    .italic()
+                    .foregroundStyle(Color(hex: "#9cabd7"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 120)
+        }
+        .padding(.all, 12)
+        .background(Color(hex: "#1a2b50").opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#2b3760").opacity(0.6), lineWidth: 1))
     }
 
     // MARK: Recording Banner
