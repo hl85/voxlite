@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import VoxLiteDomain
 
 @MainActor
@@ -58,6 +59,7 @@ public final class VoicePipeline {
     public var onPartialTranscription: ((PartialTranscription) -> Void)?
 
     private var lockedCursorContext: CursorContext?
+    private var lockedFrontmostPID: pid_t?
     private var streamingTask: Task<Void, Never>?
 
     public var stageObserver: StageObserver?
@@ -116,6 +118,7 @@ public final class VoicePipeline {
         }
         do {
             let id = try audioCapture.startRecording()
+            lockedFrontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
             logger.info("pipeline startRecording success session=\(id.uuidString)")
             if streamingMode != .off {
                 streamingTask = Task { await self.startStreamingPhase() }
@@ -177,7 +180,8 @@ public final class VoicePipeline {
 
         publishStage(.init(stage: .transcribe, phase: .started))
         logger.debug("pipeline stage transcribe begin")
-        let parsedAudio = try parseAudioPayload(audio, cursorContext: lockedCursorContext)
+        // .previewOnly 不将光标上下文注入 Whisper 提示词，仅 .full 模式才注入
+        let parsedAudio = try parseAudioPayload(audio, cursorContext: streamingMode == .full ? lockedCursorContext : nil)
         defer { try? FileManager.default.removeItem(at: parsedAudio.url) }
         let transcription: SpeechTranscription
         do {
@@ -237,6 +241,17 @@ public final class VoicePipeline {
             guard Int(Date().timeIntervalSince(processStart) * 1000) <= retryPolicy.timeoutMs else {
                 throw VoxErrorCode.timeout
             }
+            // 注入前校验前台焦点，若焦点漂移则尝试恢复到录音时的目标应用
+            if let lockedPID = lockedFrontmostPID {
+                let currentPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                if currentPID != lockedPID {
+                    if let originalApp = NSRunningApplication(processIdentifier: lockedPID) {
+                        originalApp.activate()
+                        try? await Task.sleep(for: .milliseconds(150))
+                    }
+                    logger.warn("pipeline focus drifted from pid=\(lockedPID) to pid=\(currentPID ?? -1), attempted restore")
+                }
+            }
             if stateMachine.current != .injecting {
                 guard stateMachine.transition(to: .injecting) else {
                     logger.warn("pipeline stage inject state transition rejected")
@@ -276,6 +291,7 @@ public final class VoicePipeline {
         if stateMachine.current == .done || stateMachine.current == .failed {
             _ = stateMachine.transition(to: .idle)
         }
+        lockedFrontmostPID = nil
     }
 
     public func resetResources() async {
@@ -308,7 +324,8 @@ public final class VoicePipeline {
 
     private func startStreamingPhase() async {
         guard streamingMode != .off else { return }
-        if let reader = cursorReader {
+        // 仅 .full 模式需要读取光标上下文，.previewOnly 仅做实时预览不注入上下文
+        if streamingMode == .full, let reader = cursorReader {
             do {
                 lockedCursorContext = try await reader.readContext()
                 logger.info("pipeline cursor context locked surroundingLen=\(lockedCursorContext?.surroundingText.count ?? 0)")

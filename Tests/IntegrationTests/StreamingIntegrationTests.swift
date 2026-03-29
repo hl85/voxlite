@@ -331,9 +331,10 @@ struct StreamingIntegrationTests {
         #expect(cleaner.capturedTranscripts.count == 1)
         #expect(cleaner.capturedTranscripts[0] == "集成测试转写文本")
 
-        // 验证清洗收到了光标上下文
+        // previewOnly 模式不读取光标上下文（仅 .full 模式才读取）
         #expect(cleaner.capturedContexts.count == 1)
-        #expect(cleaner.capturedContexts[0].enrich?.cursorContext?.surroundingText == "当前编辑器内容")
+        #expect(cleaner.capturedContexts[0].enrich?.cursorContext == nil,
+                "previewOnly 模式下清洗上下文不含光标数据")
 
         // 验证注入收到清洗后的文本
         #expect(injector.injectedTexts == ["集成测试清洗后文本"])
@@ -343,8 +344,9 @@ struct StreamingIntegrationTests {
         #expect(streamingTranscriber.startCalledCount == 1)
         #expect(streamingTranscriber.stopCalledCount >= 1)
 
-        // 验证光标上下文被读取
-        #expect(cursorReader.readCalledCount == 1)
+        // previewOnly 模式不读取光标上下文
+        #expect(cursorReader.readCalledCount == 0,
+                "previewOnly 模式不应读取光标上下文")
     }
 
     // MARK: - 测试 2：StreamingMode.off 回归
@@ -417,7 +419,7 @@ struct StreamingIntegrationTests {
             cleaner: cleaner,
             streamingTranscriber: ITStreamingTranscriber(),
             cursorReader: cursorReader,
-            streamingMode: .previewOnly  // 需要非 off 模式才会读取光标
+            streamingMode: .full  // 仅 .full 模式才读取光标上下文
         )
 
         let sessionId = try pipeline.startRecording()
@@ -497,7 +499,7 @@ struct StreamingIntegrationTests {
             injector: injector,
             streamingTranscriber: ITStreamingTranscriber(),
             cursorReader: cursorReader,
-            streamingMode: .previewOnly
+            streamingMode: .full  // 需要 .full 模式才会尝试读取光标
         )
 
         let sessionId = try pipeline.startRecording()

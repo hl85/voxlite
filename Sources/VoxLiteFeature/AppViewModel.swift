@@ -229,8 +229,12 @@ public final class AppViewModel: ObservableObject {
         refreshModelNames()
         configureMonitor()
         $streamingMode
+            .dropFirst()
             .sink { [weak self] mode in
-                self?.storedStreamingMode = mode.rawValue
+                guard let self else { return }
+                self.storedStreamingMode = mode.rawValue
+                // 流式模式变化需要重建 pipeline，使新的流式组件生效
+                self.saveRemoteModelSettings()
             }
             .store(in: &cancellables)
     }
@@ -937,6 +941,15 @@ public enum VoxLiteFeatureBootstrap {
         let clipboardInjector = ClipboardTextInjector(logger: logger)
         let injector = InjectionStrategyChain(strategies: [clipboardInjector])
         let retryPolicy = (usesRemoteSTT || usesRemoteLLM) ? RetryPolicy.remoteModelDefault : .m2Default
+
+        // 从 UserDefaults 读取流式模式配置
+        let storedMode = StreamingMode(rawValue: UserDefaults.standard.string(forKey: "streamingMode") ?? "") ?? .off
+
+        // 仅在非 off 模式下实例化流式组件，避免不必要的资源占用
+        let liveTranscriber: LiveSpeechTranscriber? = storedMode != .off ? LiveSpeechTranscriber() : nil
+        let streamingAudioCapture: StreamingAudioCaptureService? = storedMode != .off ? StreamingAudioCaptureService() : nil
+        let cursorContextReader: AXCursorContextReader? = storedMode != .off ? AXCursorContextReader() : nil
+
         let pipeline = VoicePipeline(
             stateMachine: stateMachine,
             audioCapture: audio,
@@ -947,7 +960,11 @@ public enum VoxLiteFeatureBootstrap {
             permissions: permissions,
             logger: logger,
             metrics: metrics,
-            retryPolicy: retryPolicy
+            retryPolicy: retryPolicy,
+            streamingTranscriber: liveTranscriber,
+            streamingAudio: streamingAudioCapture,
+            cursorReader: cursorContextReader,
+            streamingMode: storedMode
         )
         return (pipeline, cleaner)
     }

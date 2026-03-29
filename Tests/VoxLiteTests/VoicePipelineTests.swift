@@ -125,7 +125,7 @@ struct VoicePipelineTests {
         let result = try await pipeline.stopRecordingAndProcess(sessionId: sessionId)
 
         #expect(result.transcript.text == "原始转写文本")
-        #expect(cursorReader.readCalledCount == 1)
+        #expect(cursorReader.readCalledCount == 0, "previewOnly 模式不读取光标上下文")
         #expect(streamingTranscriber.stopCalledCount >= 1)
     }
 
@@ -143,7 +143,7 @@ struct VoicePipelineTests {
 
         let recordingCleaner = ContextCapturingCleaner(capturedContexts: capturedContexts)
         let pipeline = makeHybridPipeline(
-            streamingMode: .previewOnly,
+            streamingMode: .full,
             streamingTranscriber: TestStreamingTranscriber(),
             cursorReader: cursorReader,
             cleaner: recordingCleaner
