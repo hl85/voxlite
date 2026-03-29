@@ -248,3 +248,26 @@ Session: ses_*(compaction 后恢复)
 - `grep "isStreamingActive"`: lines 28, 31 ✅
 - `grep "streamingMode"`: line 28（.off 隔离）✅
 - `lsp_diagnostics`: ZERO errors ✅
+
+## [2026-03-29] Task 14: 端到端集成测试 StreamingIntegrationTests
+
+### 实现要点
+- 新增 `IntegrationTests` testTarget 到 `Package.swift`，依赖 VoxLiteDomain/Input/Core/Output/Feature/System 全部 Source target
+- 独立 Mock 策略：IntegrationTests target 无法直接引用 VoxLiteTests/TestDoubles.swift（不同 testTarget），在集成测试文件内独立重新定义所有 mock（`ITAudioCapture`、`ITTranscriber`、`ITStreamingTranscriber`、`ITCursorReader`、`ITCleaner`、`ITInjector`、`ITContextResolver`、`ITPermissions`、`ITLogger`、`ITMetrics`、`ITStateStore`）
+- Mock 命名约定：使用 `IT` 前缀（IntegrationTests）区分于 `Test` 前缀的单元测试 mock
+- UUID 生成陷阱：`struct ITAudioCapture` 中 `startRecording()` 必须每次调用 `UUID()` 生成新 UUID，而非在结构体初始化时生成（`= .success(UUID())` 会导致所有调用返回同一个 UUID，破坏隔离性断言）
+- `TestStreamingTranscriber.shouldFailStreaming = true` 只让 startStreaming 返回立即结束的空流，不抛出错误，pipeline 会继续执行文件转写（这是预期的降级行为，不是错误）
+- `VoicePipeline.startStreamingPhase()` 是 private 方法，通过 `Task { await self.startStreamingPhase() }` 异步调用；streaming task 完成在 `stopRecordingAndProcess` 中通过 `await streamingTask?.value` 等待
+
+### 六个集成测试场景设计
+1. `testFullPipelineStreamingPreviewOnly`：验证 partial results 回调顺序和内容、最终文本来源（文件转写而非流式）、光标上下文注入到 cleaner
+2. `testFullPipelineOffModeRegression`：验证 off 模式下流式和光标组件零调用、状态迁移路径完整
+3. `testCursorContextEndToEnd`：只需非 off 模式（previewOnly 即可）即可触发光标读取链路；验证 ContextEnrichment.cursorContext 的完整字段传递
+4. `testStreamingFailureFallbackToFileOnly`：shouldFailStreaming=true 使流立即 finish，pipeline 不抛错，最终结果来自文件转写，partials 为空
+5. `testAXPermissionDeniedFullPipeline`：cursorReader.shouldThrow=true，pipeline 在 startStreamingPhase 中捕获异常并以 nil cursor context 继续，主链路正常
+6. `testConcurrentStartStop`：通过连续执行两次完整流程（resetToIdle 恢复）验证状态机幂等性；利用 `UUID()` 新实例化确保 sessionId 不同
+
+### 验证结果
+- `swift test --filter StreamingIntegrationTests`: 6/6 PASS ✅
+- 全量测试 `swift test`: 147 tests PASS (3 known issues，均为 Task 3 CursorContextReader 骨架 withKnownIssue) ✅
+- 零回归 ✅
