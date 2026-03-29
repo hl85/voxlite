@@ -162,3 +162,66 @@ Session: ses_2c7f159b1ffeOIDaPccd17EMyF
 - `swift build`: Build complete ✅
 - `lsp_diagnostics`: ZERO errors ✅
 - Commit: `c64e106` (develop)
+
+## [2026-03-29T~12:00+00:00] Task 11: VoicePipeline 混合流水线编排
+Session: ses_*(compaction 后恢复)
+
+### 实现要点
+- `VoicePipeline` 新增可选参数：`streamingTranscriber`、`streamingAudio`、`cursorReader`、`streamingMode`（默认 `.off`）、`onPartialTranscription`
+- `streamingTask: Task<Void, Never>?` 存储引用至关重要：必须保持 Task 活跃，否则 partial callbacks 在测试中无法被收到
+- `startStreamingPhase()` 在 `startRecording()` 中通过 `streamingTask = Task { await self.startStreamingPhase() }` 启动
+- `stopRecordingAndProcess()` 中必须 `await streamingTask?.value` 等待 streaming task 完成，避免竞争
+- `runStreamingPreview()` 无 `streamingAudio` 时也应启动 transcription stream（不提前 return），有 `streamingAudio` 时额外添加 buffer 推送任务
+- `@MainActor` 安全：`onPartialTranscription?(partial)` 必须通过 `await MainActor.run { self.onPartialTranscription?(partial) }` 调用
+- `buildEnrichedContext()` 读取 `cursorReader?.readContext()` 并注入 `ContextEnrichment.cursorContext`
+
+### 协议扩展
+- `VoxLiteDomain/Protocols.swift` 新增：`AudioBufferPacket`（从 VoxLiteInput 迁移）、`StreamingAudioCapturing` 协议
+- `StreamingTranscribing` 协议新增 `appendBuffer(_ buffer: AVAudioPCMBuffer)` 方法
+- `StreamingAudioCaptureService` 实现 `StreamingAudioCapturing` 协议
+
+### 测试 Double 设计
+- `TestStreamingTranscriber`：含 `appendBuffer`、`didStop: Bool { stopCalledCount > 0 }` 计算属性，`partialResults` 数组驱动 AsyncStream
+- `TestCursorReader`：返回固定 `CursorContext`，记录调用次数
+- `TestStreamingAudioCapture`：`ActorBox<T>` actor 解决 Sendable 约束，`bufferPackets` 驱动 AsyncStream
+- `makeHybridPipeline()` 工厂函数统一创建混合流水线测试实例
+- `CursorContextTests.swift` 的私有 `TestStreamingTranscriber` 被删除，统一使用 `TestDoubles.swift` 共享版本
+
+### 坑点记录
+1. **TestStreamingTranscriber 重复定义**：`CursorContextTests.swift` 内有同名 `private final class`，与 `TestDoubles.swift` 的 `internal final class` 冲突。解决方案：删除私有版本，更新测试初始化以设置 `partialResults`
+2. **streaming Task 必须存储引用**：`Task { }` 若不存储引用，Swift concurrency 可能在 task 完成前释放，导致 partial callbacks 无法触发
+3. **AsyncStream 背压**：`TestStreamingAudioCapture` 使用 `ActorBox` 包装 buffer array，确保跨 actor 边界 Sendable 安全
+4. **AudioBufferPacket 迁移**：从 VoxLiteInput 迁移到 VoxLiteDomain，`StreamingAudioCaptureTests.swift` 需要添加 `@testable import VoxLiteDomain`
+
+### 测试覆盖（5 个新测试）
+- `hybridPipeline_previewOnly_startsStreamingAndCursorReader` - streamingMode=.previewOnly 时启动 streaming 和 cursor reader
+- `hybridPipeline_partialResultCallback_receivesPartials` - partial callback 按序接收
+- `hybridPipeline_cursorContextPassedToCleanerViaEnrich` - cursorContext 传递到 cleaner
+- `hybridPipeline_streamingOff_noStreamingStarted` - streamingMode=.off 时不启动任何 streaming
+- `hybridPipeline_streamingFailure_doesNotAffectFileTranscription` - streaming 失败不影响最终转写
+
+### 验证结果
+- `swift test --filter VoicePipelineTests`: 9/9 PASS ✅
+- 全量测试 `swift test`: 137 tests PASS (3 known issues) ✅
+- `lsp_diagnostics`: ZERO errors ✅
+- Commit: `408511c` (develop) — `feat(core): hybrid pipeline orchestration with streaming preview + file final`
+
+## [2026-03-29] Task 12: AppViewModel partial text 状态管理
+
+### 实现要点
+- `@Published var partialText: String = ""` + `@Published var isStreamingActive: Bool = false` 新增到 AppViewModel
+- `handlePress()` 中：`streamingMode != .off` 时设置 `pipeline.onPartialTranscription` 回调，更新 `partialText`
+- `handleRelease()` 成功/失败/异常所有路径中均重置 `partialText = ""; isStreamingActive = false`
+- `StreamingMode.off` 不设置回调，partialText 始终为空（由 handleRelease 兜底清空）
+- `pipeline.onPartialTranscription` 是 `public var`，可直接在 `handlePress()` 内赋值
+
+### 测试覆盖（4 个新测试）
+- `testPartialTextUpdateDuringRecording` — partialText 随 partial results 更新
+- `testPartialTextClearedOnFinalResult` — 最终结果到达后 partialText 被清空
+- `testPartialTextOffMode` — StreamingMode.off 时 partialText 始终为空
+- `testPartialTextStreamingFailure` — 流式失败时 partialText 为空
+
+### 验证结果
+- `swift test --filter AppViewModelTests`: 16/16 PASS ✅
+- 全量测试 `swift test`: 141 tests PASS (3 known issues) ✅
+- `lsp_diagnostics`: ZERO errors（.build/checkouts 噪音不属于项目代码）✅

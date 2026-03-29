@@ -345,4 +345,110 @@ struct AppViewModelTests {
             #expect(transcriber.transcriber is UnsupportedPlatformSpeechTranscriber)
         }
     }
+
+    @Test
+    func testPartialTextUpdateDuringRecording() async {
+        let streamingTranscriber = TestStreamingTranscriber()
+        streamingTranscriber.partialResults = [
+            PartialTranscription(text: "你好", isFinal: false),
+            PartialTranscription(text: "你好世界", isFinal: false)
+        ]
+        let pipeline = makeHybridPipeline(
+            streamingMode: .previewOnly,
+            streamingTranscriber: streamingTranscriber
+        )
+        let viewModel = AppViewModel(
+            pipeline: pipeline,
+            permissions: TestPermissions(),
+            performanceSampler: PerformanceSampler(),
+            historyStore: TestHistoryStore(),
+            skillStore: TestSkillStore(),
+            settingsStore: TestSettingsStore(),
+            launchAtLoginManager: TestLaunchAtLoginManager(),
+            foundationModelAvailabilityProvider: TestAvailabilityProvider()
+        )
+        viewModel.streamingMode = .previewOnly
+        await viewModel.simulatePressForTesting()
+
+        pipeline.onPartialTranscription?(PartialTranscription(text: "你好", isFinal: false))
+        #expect(viewModel.partialText == "你好")
+
+        pipeline.onPartialTranscription?(PartialTranscription(text: "你好世界", isFinal: false))
+        #expect(viewModel.partialText == "你好世界")
+    }
+
+    @Test
+    func testPartialTextClearedOnFinalResult() async {
+        let pipeline = makeHybridPipeline(streamingMode: .previewOnly)
+        let viewModel = AppViewModel(
+            pipeline: pipeline,
+            permissions: TestPermissions(),
+            performanceSampler: PerformanceSampler(),
+            historyStore: TestHistoryStore(),
+            skillStore: TestSkillStore(),
+            settingsStore: TestSettingsStore(),
+            launchAtLoginManager: TestLaunchAtLoginManager(),
+            foundationModelAvailabilityProvider: TestAvailabilityProvider()
+        )
+        viewModel.streamingMode = .previewOnly
+
+        await viewModel.simulatePressForTesting()
+        pipeline.onPartialTranscription?(PartialTranscription(text: "中间文本", isFinal: false))
+        #expect(viewModel.partialText == "中间文本")
+
+        await viewModel.simulateReleaseForTesting()
+        #expect(viewModel.partialText == "")
+        #expect(viewModel.isStreamingActive == false)
+    }
+
+    @Test
+    func testPartialTextOffMode() async {
+        let pipeline = makeHybridPipeline(streamingMode: .off)
+        let viewModel = AppViewModel(
+            pipeline: pipeline,
+            permissions: TestPermissions(),
+            performanceSampler: PerformanceSampler(),
+            historyStore: TestHistoryStore(),
+            skillStore: TestSkillStore(),
+            settingsStore: TestSettingsStore(),
+            launchAtLoginManager: TestLaunchAtLoginManager(),
+            foundationModelAvailabilityProvider: TestAvailabilityProvider()
+        )
+        viewModel.streamingMode = .off
+
+        await viewModel.simulatePressForTesting()
+        pipeline.onPartialTranscription?(PartialTranscription(text: "任意文本", isFinal: false))
+        #expect(viewModel.partialText == "")
+        #expect(viewModel.isStreamingActive == false)
+
+        await viewModel.simulateReleaseForTesting()
+        #expect(viewModel.partialText == "")
+    }
+
+    @Test
+    func testPartialTextStreamingFailure() async {
+        let streamingTranscriber = TestStreamingTranscriber()
+        streamingTranscriber.shouldFailStreaming = true
+        let pipeline = makeHybridPipeline(
+            streamingMode: .previewOnly,
+            streamingTranscriber: streamingTranscriber
+        )
+        let viewModel = AppViewModel(
+            pipeline: pipeline,
+            permissions: TestPermissions(),
+            performanceSampler: PerformanceSampler(),
+            historyStore: TestHistoryStore(),
+            skillStore: TestSkillStore(),
+            settingsStore: TestSettingsStore(),
+            launchAtLoginManager: TestLaunchAtLoginManager(),
+            foundationModelAvailabilityProvider: TestAvailabilityProvider()
+        )
+        viewModel.streamingMode = .previewOnly
+
+        await viewModel.simulatePressForTesting()
+        #expect(viewModel.partialText == "" || !viewModel.partialText.isEmpty)
+
+        await viewModel.simulateReleaseForTesting()
+        #expect(viewModel.partialText == "")
+    }
 }

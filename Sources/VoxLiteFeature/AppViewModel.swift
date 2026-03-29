@@ -170,6 +170,8 @@ public final class AppViewModel: ObservableObject {
     @Published public var skillSnapshot: SkillConfigSnapshot = FileSkillStore.defaultSnapshot
     @Published public var appSettings: AppSettings = FileAppSettingsStore.defaultSettings
     @Published public var streamingMode: StreamingMode = .off
+    @Published public var partialText: String = ""
+    @Published public var isStreamingActive: Bool = false
     @Published public var menuBarSummary: String = ""
     @Published public var trialRunPassed: Bool = false
 
@@ -554,6 +556,12 @@ public final class AppViewModel: ObservableObject {
             recommendedSettingItem = nil
             canRetry = false
             showRecordingAnimation = true
+            if streamingMode != .off {
+                isStreamingActive = true
+                pipeline.onPartialTranscription = { [weak self] partial in
+                    self?.partialText = partial.text
+                }
+            }
         } catch {
             if let voxError = error as? VoxErrorCode, voxError == .recordingUnavailable {
                 stateText = "Idle"
@@ -585,6 +593,8 @@ public final class AppViewModel: ObservableObject {
             let result = try await pipeline.stopRecordingAndProcess(sessionId: activeSessionId)
             stateText = result.inject.success ? "Done" : "Failed"
             cleanedText = result.clean.cleanText
+            partialText = ""
+            isStreamingActive = false
             trialRunPassed = result.inject.success
             cleanStyleTag = result.clean.styleTag
             setProcessingFeedback(result.inject.success ? .completed : .failed)
@@ -614,6 +624,8 @@ public final class AppViewModel: ObservableObject {
                 lastError = "按住快捷键稍久一点再说话"
                 actionTitle = ""
                 canRetry = false
+                partialText = ""
+                isStreamingActive = false
                 applySpeechReadiness(.terminated(.recordingTooShort))
                 setProcessingFeedback(.failed, text: "录音过短，已终止")
                 refreshFoundationModelAvailability()
@@ -622,6 +634,8 @@ public final class AppViewModel: ObservableObject {
                 return
             }
             stateText = "Failed"
+            partialText = ""
+            isStreamingActive = false
             if let voxError = error as? VoxErrorCode, voxError == .timeout {
                 lastError = "处理超时，请重试"
                 setProcessingFeedback(.failed, text: "处理超时")
