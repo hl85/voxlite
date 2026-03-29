@@ -19,6 +19,15 @@ public protocol ContextResolving {
     func resolveContext() -> ContextInfo
 }
 
+public protocol CursorContextReading: Sendable {
+    func readContext() async throws -> CursorContext?
+}
+
+public protocol StreamingTranscribing: Sendable {
+    func startStreaming() -> AsyncStream<PartialTranscription>
+    func stopStreaming() async
+}
+
 @MainActor
 public protocol TextCleaning {
     func cleanText(transcript: String, context: ContextInfo) async -> CleanResult

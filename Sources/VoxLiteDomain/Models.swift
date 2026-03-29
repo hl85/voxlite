@@ -67,26 +67,66 @@ public struct RetryPolicy: Equatable, Sendable {
     public static let remoteModelDefault = RetryPolicy(timeoutMs: 10_000, maxRetries: 1)
 }
 
+public struct CursorContext: Codable, Equatable, Sendable {
+    public let surroundingText: String
+    public let selectedText: String?
+    public let appBundleId: String
+    public let cursorPosition: Int?
+
+    public init(
+        surroundingText: String,
+        selectedText: String?,
+        appBundleId: String,
+        cursorPosition: Int?
+    ) {
+        self.surroundingText = surroundingText
+        self.selectedText = selectedText
+        self.appBundleId = appBundleId
+        self.cursorPosition = cursorPosition
+    }
+}
+
+public struct PartialTranscription: Sendable {
+    public let text: String
+    public let isFinal: Bool
+    public let confidence: Double?
+
+    public init(text: String, isFinal: Bool, confidence: Double? = nil) {
+        self.text = text
+        self.isFinal = isFinal
+        self.confidence = confidence
+    }
+}
+
+public enum StreamingMode: String, Sendable, CaseIterable {
+    case off
+    case previewOnly
+    case full
+}
+
 public struct ContextEnrichment: Codable, Equatable, Sendable {
     public let appName: String?
     public let isEditable: Bool?
     public let focusedRole: String?
     public let vocabularyBias: [String: String]
+    public let cursorContext: CursorContext?
 
     public init(
         appName: String? = nil,
         isEditable: Bool? = nil,
         focusedRole: String? = nil,
-        vocabularyBias: [String: String] = [:]
+        vocabularyBias: [String: String] = [:],
+        cursorContext: CursorContext? = nil
     ) {
         self.appName = appName
         self.isEditable = isEditable
         self.focusedRole = focusedRole
         self.vocabularyBias = vocabularyBias
+        self.cursorContext = cursorContext
     }
 
     public var isEmpty: Bool {
-        appName == nil && isEditable == nil && focusedRole == nil && vocabularyBias.isEmpty
+        appName == nil && isEditable == nil && focusedRole == nil && vocabularyBias.isEmpty && cursorContext == nil
     }
 }
 
