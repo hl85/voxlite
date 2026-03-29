@@ -80,14 +80,11 @@ public final class VoicePipeline {
     public func startRecording() throws -> UUID {
         logger.info("pipeline startRecording begin")
         let snapshot = permissions.currentPermissionSnapshot()
-        guard snapshot.allGranted else {
+        guard snapshot.microphoneGranted && snapshot.speechRecognitionGranted else {
             logger.warn("pipeline startRecording denied permissions mic=\(snapshot.microphoneGranted) speech=\(snapshot.speechRecognitionGranted) ax=\(snapshot.accessibilityGranted)")
             _ = stateMachine.transition(to: .failed)
             if !snapshot.microphoneGranted {
                 throw VoxErrorCode.permissionMicrophoneDenied
-            }
-            if !snapshot.accessibilityGranted {
-                throw VoxErrorCode.permissionAccessibilityDenied
             }
             if !snapshot.speechRecognitionGranted {
                 throw VoxErrorCode.permissionSpeechDenied

@@ -52,6 +52,15 @@ public final class InMemoryMetrics: MetricsServing, @unchecked Sendable {
 public final class PermissionManager: PermissionManaging, @unchecked Sendable {
     public init() {}
 
+    public func checkAccessibilityPermission() -> Bool {
+        AXIsProcessTrusted()
+    }
+
+    public func requestAccessibilityPermission() {
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
+
     public func hasRequiredPermissions() -> Bool {
         currentPermissionSnapshot().allGranted
     }
@@ -59,8 +68,7 @@ public final class PermissionManager: PermissionManaging, @unchecked Sendable {
     public func currentPermissionSnapshot() -> PermissionSnapshot {
         let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         let speech = SFSpeechRecognizer.authorizationStatus() == .authorized
-        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
-        let accessibility = AXIsProcessTrustedWithOptions(options)
+        let accessibility = checkAccessibilityPermission()
         return PermissionSnapshot(
             microphoneGranted: mic,
             speechRecognitionGranted: speech,
@@ -87,9 +95,8 @@ public final class PermissionManager: PermissionManaging, @unchecked Sendable {
                 }
             }
         case .accessibility:
-            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-            let result = AXIsProcessTrustedWithOptions(options)
-            return result
+            requestAccessibilityPermission()
+            return checkAccessibilityPermission()
         }
     }
 
