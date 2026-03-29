@@ -43,33 +43,33 @@ struct CursorContextReaderTests {
     /// 受支持 App（TextEdit）焦点时应返回非 nil 上下文
     @Test
     func testReadContextFromSupportedApp() async throws {
-        withKnownIssue("骨架阶段: AX API 尚未实现，Task 5 完成后变绿") {
+        await withKnownIssue("骨架阶段: AX API 尚未实现，Task 5 完成后变绿") {
             let reader = AXCursorContextReader()
-            // Task 5 实现后，在 TextEdit 有焦点时应返回 CursorContext
-            // 当前骨架返回 nil，此断言预期失败
-            // #expect(context != nil)
+            let context = try? await reader.readContext()
+            // 骨架返回 nil，此断言预期失败；Task 5 实现后变绿
+            #expect(context != nil)
         }
     }
 
     /// 选中文本应被捕获到 CursorContext.selectedText
     @Test
     func testReadContextWithSelectedText() async throws {
-        await withKnownIssue("骨架阶段: 选中文本读取尚未实现") {
+        await withKnownIssue("骨架阶段: 选中文本读取尚未实现，Task 5 完成后变绿") {
             let reader = AXCursorContextReader()
             let context = try? await reader.readContext()
-            // Task 5 后：#expect(context?.selectedText != nil)
-            _ = context
+            // 骨架返回 nil，selectedText 为 nil，此断言预期失败
+            #expect(context?.selectedText != nil)
         }
     }
 
     /// 超过 500 字符的上下文应被截断
     @Test
     func testReadContextTruncation() async throws {
-        await withKnownIssue("骨架阶段: 截断逻辑尚未实现") {
+        await withKnownIssue("骨架阶段: 截断逻辑尚未实现，Task 5 完成后变绿") {
             let reader = AXCursorContextReader()
             let context = try? await reader.readContext()
-            // Task 5 后：#expect(context?.surroundingText.count ?? 0 <= 500)
-            _ = context
+            // 骨架返回 nil，surroundingText 不存在，此断言预期失败
+            #expect((context?.surroundingText.count ?? 0) <= 500)
         }
     }
 

@@ -77,6 +77,24 @@ let package = Package(
                 "VoxLiteSystem",
                 "VoxLiteFeature"
             ]
+        ),
+        .testTarget(
+            name: "SystemTests",
+            dependencies: [
+                .product(name: "Testing", package: "swift-testing"),
+                "VoxLiteDomain",
+                "VoxLiteCore",
+                "VoxLiteSystem"
+            ]
+        ),
+        // InputLayerTests：专门测试 VoxLiteInput 层服务，使用 XCTest 框架
+        .testTarget(
+            name: "InputLayerTests",
+            dependencies: [
+                .product(name: "Testing", package: "swift-testing"),
+                "VoxLiteDomain",
+                "VoxLiteInput"
+            ]
         )
     ]
 )
