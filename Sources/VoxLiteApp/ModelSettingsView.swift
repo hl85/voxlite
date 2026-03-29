@@ -33,7 +33,7 @@ struct ModelSettingsView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionCard(title: "语音识别模型 (STT)") {
+            sectionCard(title: "STT（语音识别模型）") {
                 VStack(spacing: 10) {
                     settingRow("服务商") {
                         Picker("", selection: $sttProvider) {
@@ -58,7 +58,7 @@ struct ModelSettingsView: View {
                 }
             }
             
-            sectionCard(title: "LLM 模型") {
+            sectionCard(title: "LLM（大语言模型）") {
                 VStack(spacing: 10) {
                     settingRow("服务商") {
                         Picker("", selection: $llmProvider) {

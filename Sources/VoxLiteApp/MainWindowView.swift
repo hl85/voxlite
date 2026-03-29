@@ -14,7 +14,7 @@ struct MainWindowView: View {
     @State private var draftSkillTemplate = ""
     @State private var draftIsDefault = false
     @State private var draftBindings: [AppBinding] = []
-    @State private var selectedRunningAppBundleId = ""
+    @State private var appSearchText = ""
     @State private var isHotKeyCapturing = false
     @State private var hotKeyCaptureText = ""
     @State private var easterEggTapCount = 0
@@ -340,10 +340,16 @@ private extension MainWindowView {
                     if !model.processingFeedbackText.isEmpty {
                         statusItemRow("处理反馈", model.processingFeedbackText)
                     }
-                    statusItemRow("语音识别就绪态", model.speechStatus)
-                    statusItemRow("Foundation Model 就绪态", model.foundationModelStatus)
-                    statusItemRow("语音识别模型 (STT)", model.sttModelName)
-                    statusItemRow("LLM 模型", model.llmModelName)
+                    statusItemRowWithTag(
+                        "语音识别就绪态",
+                        model.speechStatus,
+                        tag: "STT（语音识别模型）：\(model.sttModelName)"
+                    )
+                    statusItemRowWithTag(
+                        "撰写技能就绪态",
+                        model.foundationModelStatus,
+                        tag: "LLM（大语言模型）：\(model.llmModelName)"
+                    )
                     statusItemRow("清洗策略", model.cleanStyleTag)
                     errorDisplayRow()
                 }
@@ -400,7 +406,7 @@ private extension MainWindowView {
                             .font(.system(size: 13))
                             .foregroundStyle(palette.mutedText)
                         fieldBlock(title: "提示词", value: skill.template)
-                        fieldBlock(title: "应用匹配", value: formattedBindings(for: skill.id))
+                        fieldBlock(title: "匹配应用", value: formattedBindings(for: skill.id))
                         HStack(spacing: 10) {
                             Button("编辑") {
                                 startEditSkillEditor(skill)
@@ -558,6 +564,34 @@ private extension MainWindowView {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
     }
 
+    func statusItemRowWithTag(_ name: String, _ status: String, tag: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(name)
+                    .font(.system(size: 13))
+                    .foregroundStyle(palette.bodyText)
+                Spacer()
+                statusPill(statusText(status), tone: statusTone(status))
+            }
+            configTag(tag)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(palette.mainBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
+    }
+
+    func configTag(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(palette.mutedText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Color(hex: "#edf2ff"))
+            .clipShape(Capsule())
+    }
+
     func errorDisplayRow() -> some View {
         Group {
             if model.lastError.isEmpty {
@@ -633,12 +667,19 @@ private extension MainWindowView {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
     }
 
+    /// com.alibaba.dingtalkmac → ..dingtalkmac
+    func shortenedBundleId(_ bundleId: String) -> String {
+        guard let lastDotIndex = bundleId.lastIndex(of: ".") else { return bundleId }
+        let suffix = bundleId[bundleId.index(after: lastDotIndex)...]
+        return "..\(suffix)"
+    }
+
     func formattedBindings(for skillId: String) -> String {
         let bindings = model.bindingsForSkill(skillId)
         if bindings.isEmpty {
             return "未绑定应用"
         }
-        return bindings.map { "\($0.appName) (\($0.bundleId))" }.joined(separator: "，")
+        return bindings.map { "\($0.appName) (\(shortenedBundleId($0.bundleId)))" }.joined(separator: "，")
     }
 
     var runningApps: [AppBinding] {
@@ -652,6 +693,17 @@ private extension MainWindowView {
             .sorted { $0.appName.localizedStandardCompare($1.appName) == .orderedAscending }
     }
 
+    var filteredRunningApps: [AppBinding] {
+        let available = runningApps.filter { app in
+            !draftBindings.contains(where: { $0.bundleId == app.bundleId })
+        }
+        guard appSearchText.isEmpty == false else { return available }
+        return available.filter { app in
+            app.appName.localizedCaseInsensitiveContains(appSearchText) ||
+            app.bundleId.localizedCaseInsensitiveContains(appSearchText)
+        }
+    }
+
     func startAddSkillEditor() {
         editorSkillId = nil
         draftSkillName = ""
@@ -659,7 +711,7 @@ private extension MainWindowView {
         draftSkillTemplate = "{{text}}"
         draftIsDefault = false
         draftBindings = []
-        selectedRunningAppBundleId = runningApps.first?.bundleId ?? ""
+        appSearchText = ""
         isSkillEditorPresented = true
     }
 
@@ -670,7 +722,7 @@ private extension MainWindowView {
         draftSkillTemplate = skill.template
         draftIsDefault = model.skillSnapshot.matching.defaultSkillId == skill.id
         draftBindings = model.bindingsForSkill(skill.id)
-        selectedRunningAppBundleId = runningApps.first?.bundleId ?? ""
+        appSearchText = ""
         isSkillEditorPresented = true
     }
 
@@ -700,14 +752,6 @@ private extension MainWindowView {
         isSkillEditorPresented = false
     }
 
-    func addSelectedRunningAppBinding() {
-        guard let selected = runningApps.first(where: { $0.bundleId == selectedRunningAppBundleId }) else { return }
-        if draftBindings.contains(where: { $0.bundleId == selected.bundleId }) == false {
-            draftBindings.append(selected)
-            draftBindings.sort { $0.appName.localizedStandardCompare($1.appName) == .orderedAscending }
-        }
-    }
-
     var skillEditorSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -724,35 +768,93 @@ private extension MainWindowView {
             }
             .textFieldStyle(.roundedBorder)
             Toggle("设为默认技能", isOn: $draftIsDefault)
+            Divider()
             VStack(alignment: .leading, spacing: 8) {
                 Text("匹配应用")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(palette.bodyText)
-                HStack {
-                    Picker("运行中应用", selection: $selectedRunningAppBundleId) {
-                        ForEach(runningApps, id: \.bundleId) { app in
-                            Text("\(app.appName) (\(app.bundleId))").tag(app.bundleId)
+                TextField("搜索运行中的应用…", text: $appSearchText)
+                    .textFieldStyle(.roundedBorder)
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if filteredRunningApps.isEmpty {
+                            Text("无匹配应用")
+                                .font(.system(size: 12))
+                                .foregroundStyle(palette.mutedText)
+                                .padding(.vertical, 4)
+                        } else {
+                            ForEach(filteredRunningApps, id: \.bundleId) { app in
+                                HStack(spacing: 6) {
+                                    Text(app.appName)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(palette.bodyText)
+                                        .lineLimit(1)
+                                    Text(shortenedBundleId(app.bundleId))
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(palette.mutedText)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    Button {
+                                        draftBindings.append(app)
+                                        draftBindings.sort { $0.appName.localizedStandardCompare($1.appName) == .orderedAscending }
+                                        appSearchText = ""
+                                    } label: {
+                                        Image(systemName: "plus")
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundStyle(palette.bodyText)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(palette.mainBackground)
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(palette.cardBorder, lineWidth: 1))
+                            }
                         }
                     }
-                    Button("添加应用") {
-                        addSelectedRunningAppBinding()
-                    }
-                    .buttonStyle(VoxSecondaryButtonStyle())
+                    .padding(.vertical, 2)
                 }
-                ForEach(draftBindings) { binding in
-                    HStack {
-                        Text("\(binding.appName) (\(binding.bundleId))")
+                .frame(maxHeight: 120)
+                ScrollView(.vertical, showsIndicators: true) {
+                    if draftBindings.isEmpty {
+                        Text("暂无绑定应用")
                             .font(.system(size: 12))
-                            .foregroundStyle(palette.bodyText)
-                        Spacer()
-                        Button("移除") {
-                            draftBindings.removeAll { $0.bundleId == binding.bundleId }
+                            .foregroundStyle(palette.mutedText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], alignment: .leading, spacing: 6) {
+                            ForEach(draftBindings) { binding in
+                                HStack(spacing: 4) {
+                                    Text(binding.appName)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(palette.bodyText)
+                                        .lineLimit(1)
+                                    Text(shortenedBundleId(binding.bundleId))
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(palette.mutedText)
+                                        .lineLimit(1)
+                                    Button {
+                                        draftBindings.removeAll { $0.bundleId == binding.bundleId }
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 8, weight: .semibold))
+                                            .foregroundStyle(palette.mutedText)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(palette.mainBackground)
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(palette.cardBorder, lineWidth: 1))
+                            }
                         }
-                        .buttonStyle(VoxSecondaryButtonStyle())
                     }
                 }
+                .frame(maxHeight: .infinity)
             }
-            Spacer()
             HStack {
                 Spacer()
                 Button("取消") {
