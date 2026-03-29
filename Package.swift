@@ -115,6 +115,19 @@ let package = Package(
                 "VoxLiteSystem"
             ],
             path: "Tests/IntegrationTests"
+        ),
+        .testTarget(
+            name: "PerformanceTests",
+            dependencies: [
+                .product(name: "Testing", package: "swift-testing"),
+                "VoxLiteDomain",
+                "VoxLiteInput",
+                "VoxLiteCore",
+                "VoxLiteOutput",
+                "VoxLiteFeature",
+                "VoxLiteSystem"
+            ],
+            path: "Tests/PerformanceTests"
         )
     ]
 )
