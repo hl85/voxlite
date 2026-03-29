@@ -532,7 +532,7 @@ public final class AppViewModel: ObservableObject {
         permissionSnapshot = permissions.currentPermissionSnapshot()
         refreshFoundationModelAvailability()
         applySpeechReadiness(.notReady)
-        guard permissionSnapshot.allGranted else {
+        guard permissionSnapshot.microphoneGranted && permissionSnapshot.speechRecognitionGranted else {
             stateText = "Failed"
             setProcessingFeedback(.idle)
             showOnboarding = true
