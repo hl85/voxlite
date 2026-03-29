@@ -115,6 +115,50 @@ struct ContextResolverTests {
         #expect(generator.prompts[0].contains("词汇偏置：优先使用以下写法：cmd→command。"))
         #expect(generator.prompts[0].contains("command add fallback path"))
     }
+
+    @Test
+    func resolveContextAsync_whenCursorReaderReturnsContext_enrichesCursorContext() async {
+        let cursorContext = CursorContext(
+            surroundingText: "let foo = 42",
+            selectedText: "foo",
+            appBundleId: "com.apple.dt.Xcode",
+            cursorPosition: 4
+        )
+        let reader = StubCursorContextReader(result: .success(cursorContext))
+        let resolver = FrontmostContextResolver(cursorReader: reader)
+
+        let info = await resolver.resolveContextAsync()
+
+        #expect(info.enrich?.cursorContext == cursorContext)
+    }
+
+    @Test
+    func resolveContextAsync_whenCursorReaderReturnsNil_enrichHasNoCursorContext() async {
+        let reader = StubCursorContextReader(result: .success(nil))
+        let resolver = FrontmostContextResolver(cursorReader: reader)
+
+        let info = await resolver.resolveContextAsync()
+
+        #expect(info.enrich?.cursorContext == nil)
+    }
+
+    @Test
+    func resolveContextAsync_whenCursorReaderThrows_gracefullyDegradesCursorContextToNil() async {
+        let reader = StubCursorContextReader(result: .failure(VoxErrorCode.permissionAccessibilityDenied))
+        let resolver = FrontmostContextResolver(cursorReader: reader)
+
+        let info = await resolver.resolveContextAsync()
+
+        #expect(info.enrich?.cursorContext == nil)
+    }
+}
+
+private struct StubCursorContextReader: CursorContextReading {
+    let result: Result<CursorContext?, Error>
+
+    func readContext() async throws -> CursorContext? {
+        try result.get()
+    }
 }
 
 private struct ContextResolverFailingPromptGenerator: PromptGenerating {

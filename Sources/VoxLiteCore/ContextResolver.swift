@@ -1,9 +1,19 @@
 import AppKit
 import Foundation
 import VoxLiteDomain
+import VoxLiteSystem
 
 public final class FrontmostContextResolver: ContextResolving {
-    public init() {}
+    private let cursorReader: (any CursorContextReading)?
+    private let logger: LoggerServing?
+
+    public init(
+        cursorReader: (any CursorContextReading)? = nil,
+        logger: LoggerServing? = nil
+    ) {
+        self.cursorReader = cursorReader
+        self.logger = logger
+    }
 
     public func resolveContext() -> ContextInfo {
         let app = NSWorkspace.shared.frontmostApplication
@@ -78,6 +88,33 @@ public final class FrontmostContextResolver: ContextResolving {
         case .general:
             return nil
         }
+    }
+
+    public func resolveContextAsync() async -> ContextInfo {
+        let base = resolveContext()
+        guard let cursorReader else { return base }
+        let cursorContext: CursorContext?
+        do {
+            cursorContext = try await cursorReader.readContext()
+        } catch {
+            logger?.warn("cursor_context_reader failed error=\(error)")
+            cursorContext = nil
+        }
+        guard let cursorContext else { return base }
+        let updatedEnrich = ContextEnrichment(
+            appName: base.enrich?.appName,
+            isEditable: base.enrich?.isEditable,
+            focusedRole: base.enrich?.focusedRole,
+            vocabularyBias: base.enrich?.vocabularyBias ?? [:],
+            cursorContext: cursorContext
+        )
+        return ContextInfo(
+            bundleId: base.bundleId,
+            appCategory: base.appCategory,
+            inputRole: base.inputRole,
+            locale: base.locale,
+            enrich: updatedEnrich
+        )
     }
 
     private func vocabularyBias(bundleId: String, category: AppCategory) -> [String: String] {
