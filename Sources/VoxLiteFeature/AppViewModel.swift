@@ -1,9 +1,11 @@
 import Foundation
+import Combine
 import VoxLiteCore
 import VoxLiteDomain
 import VoxLiteInput
 import VoxLiteOutput
 import VoxLiteSystem
+import SwiftUI
 
 public enum SpeechReadinessState: Equatable, Sendable {
     public enum FailureReason: Equatable, Sendable {
@@ -167,6 +169,7 @@ public final class AppViewModel: ObservableObject {
     @Published public var historyItems: [TranscriptHistoryItem] = []
     @Published public var skillSnapshot: SkillConfigSnapshot = FileSkillStore.defaultSnapshot
     @Published public var appSettings: AppSettings = FileAppSettingsStore.defaultSettings
+    @Published public var streamingMode: StreamingMode = .off
     @Published public var menuBarSummary: String = ""
     @Published public var trialRunPassed: Bool = false
 
@@ -182,8 +185,10 @@ public final class AppViewModel: ObservableObject {
     private var foundationModelAvailabilityProvider: any FoundationModelAvailabilityProviding
     private let runtimeChainReloader: (() -> (pipeline: VoicePipeline, availabilityProvider: any FoundationModelAvailabilityProviding))?
     private let skillMatcher = SkillMatcher()
+    private var cancellables = Set<AnyCancellable>()
     private var monitor: HotKeyMonitor?
     private var activeSessionId: UUID?
+    @AppStorage("streamingMode") private var storedStreamingMode: String = StreamingMode.off.rawValue
 
     public init(
         pipeline: VoicePipeline,
@@ -208,6 +213,7 @@ public final class AppViewModel: ObservableObject {
         self.permissionSnapshot = permissions.currentPermissionSnapshot()
         let settings = self.settingsStore.loadSettings()
         self.appSettings = settings
+        self.streamingMode = StreamingMode(rawValue: storedStreamingMode) ?? .off
         let onboardingDone = settings.onboardingCompleted && permissionSnapshot.allGranted
         self.showOnboarding = !onboardingDone
         self.onboardingStep = onboardingDone ? 5 : (permissionSnapshot.allGranted ? 4 : 1)
@@ -220,6 +226,11 @@ public final class AppViewModel: ObservableObject {
         refreshFoundationModelAvailability()
         refreshModelNames()
         configureMonitor()
+        $streamingMode
+            .sink { [weak self] mode in
+                self?.storedStreamingMode = mode.rawValue
+            }
+            .store(in: &cancellables)
     }
 
     public func resetResources() async {

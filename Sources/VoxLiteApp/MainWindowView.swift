@@ -468,6 +468,17 @@ private extension MainWindowView {
                         .toggleStyle(.switch)
                         .labelsHidden()
                     }
+                    settingRow("流式模式") {
+                        Picker("流式模式", selection: Binding<StreamingMode>(
+                            get: { model.streamingMode },
+                            set: { model.streamingMode = $0 }
+                        )) {
+                            ForEach(StreamingMode.allCases, id: \.self) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.radioGroup)
+                    }
                     settingRow("状态栏菜单") {
                         Picker("", selection: Binding(
                             get: { model.appSettings.menuBarDisplayMode },
@@ -1011,5 +1022,18 @@ private extension MainWindowView {
         .background(palette.mainBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
+    }
+}
+
+extension StreamingMode {
+    var displayName: String {
+        switch self {
+        case .off:
+            return "关闭（仅文件转写）"
+        case .previewOnly:
+            return "实时预览 + 最终转写"
+        case .full:
+            return "仅实时流式（未来）"
+        }
     }
 }
