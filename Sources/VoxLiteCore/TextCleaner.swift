@@ -283,6 +283,13 @@ public final class RuleBasedTextCleaner: TextCleaning, FoundationModelAvailabili
             let serialized = bias.keys.sorted().map { "\($0)→\(bias[$0] ?? "")" }.joined(separator: "，")
             instructions.append("词汇偏置：优先使用以下写法：\(serialized)。")
         }
+        if let cursor = context.enrich?.cursorContext {
+            let truncated = String(cursor.surroundingText.prefix(500))
+            instructions.append("用户当前输入上下文（光标附近的文本）：\n「\(truncated)」\n请参考此上下文来提高对专有名词、缩写和上下文相关术语的识别准确性。")
+            if let selected = cursor.selectedText, selected.isEmpty == false {
+                instructions.append("用户当前选中的文本：「\(selected)」")
+            }
+        }
         return instructions.joined(separator: "\n")
     }
 
