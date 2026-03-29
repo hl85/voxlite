@@ -1,13 +1,8 @@
 import AVFoundation
 import Foundation
+import VoxLiteDomain
 
-/// AVAudioPCMBuffer 不符合 Sendable，用此 wrapper 满足 Swift 6 跨隔离边界传递要求。
-/// 内部持有的 buffer 在 tap 回调结束前已被 ARC retain，生命周期安全。
-public struct AudioBufferPacket: @unchecked Sendable {
-    public let buffer: AVAudioPCMBuffer
-}
-
-public final class StreamingAudioCaptureService: @unchecked Sendable {
+public final class StreamingAudioCaptureService: StreamingAudioCapturing, @unchecked Sendable {
     private let audioEngine = AVAudioEngine()
     private var continuation: AsyncStream<AudioBufferPacket>.Continuation?
 

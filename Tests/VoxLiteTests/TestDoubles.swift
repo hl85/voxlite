@@ -1,7 +1,9 @@
+import AVFoundation
 import Foundation
 @testable import VoxLiteCore
 @testable import VoxLiteDomain
 @testable import VoxLiteFeature
+@testable import VoxLiteInput
 @testable import VoxLiteOutput
 @testable import VoxLiteSystem
 
@@ -235,6 +237,73 @@ struct TestAvailabilityProvider: FoundationModelAvailabilityProviding {
     }
 }
 
+final class TestStreamingTranscriber: StreamingTranscribing, @unchecked Sendable {
+    private(set) var appendedBufferCount = 0
+    private(set) var stopCalledCount = 0
+    private(set) var startCalledCount = 0
+    var partialResults: [PartialTranscription] = []
+    var shouldFailStreaming = false
+
+    var didStop: Bool { stopCalledCount > 0 }
+
+    func startStreaming() -> AsyncStream<PartialTranscription> {
+        startCalledCount += 1
+        if shouldFailStreaming {
+            return AsyncStream { $0.finish() }
+        }
+        let results = partialResults
+        return AsyncStream { continuation in
+            for result in results {
+                continuation.yield(result)
+            }
+            continuation.finish()
+        }
+    }
+
+    func stopStreaming() async {
+        stopCalledCount += 1
+    }
+
+    func appendBuffer(_ buffer: AVAudioPCMBuffer) {
+        appendedBufferCount += 1
+    }
+}
+
+final class TestCursorReader: CursorContextReading, @unchecked Sendable {
+    var contextToReturn: CursorContext?
+    var shouldThrow = false
+    private(set) var readCalledCount = 0
+
+    func readContext() async throws -> CursorContext? {
+        readCalledCount += 1
+        if shouldThrow {
+            throw VoxErrorCode.contextUnavailable
+        }
+        return contextToReturn
+    }
+}
+
+final class TestStreamingAudioCapture: StreamingAudioCapturing, @unchecked Sendable {
+    private(set) var startCalledCount = 0
+    private(set) var stopCalledCount = 0
+    var buffersToEmit: [AVAudioPCMBuffer] = []
+
+    func startStreaming() -> AsyncStream<AudioBufferPacket> {
+        startCalledCount += 1
+        let buffers = buffersToEmit
+        return AsyncStream { continuation in
+            for buffer in buffers {
+                continuation.yield(AudioBufferPacket(buffer: buffer))
+            }
+            continuation.finish()
+        }
+    }
+
+    func stopStreaming() {
+        stopCalledCount += 1
+    }
+}
+
 @MainActor
 func makePipeline(
     stateMachine: TestStateStore = TestStateStore(),
@@ -272,4 +341,79 @@ func makePipeline(
         retryPolicy: retryPolicy
     )
     return (pipeline, stateMachine, injector, metrics, permissions)
+}
+
+actor ActorBox<T> {
+    private(set) var value: T
+
+    init(_ initial: T) {
+        self.value = initial
+    }
+}
+
+extension ActorBox where T == [ContextInfo] {
+    func append(_ context: ContextInfo) {
+        value.append(context)
+    }
+}
+
+@MainActor
+final class ContextCapturingCleaner: TextCleaning {
+    private let capturedContexts: ActorBox<[ContextInfo]>
+
+    init(capturedContexts: ActorBox<[ContextInfo]>) {
+        self.capturedContexts = capturedContexts
+    }
+
+    func cleanText(transcript: String, context: ContextInfo) async -> CleanResult {
+        await capturedContexts.append(context)
+        return CleanResult(
+            cleanText: transcript,
+            confidence: 0.9,
+            styleTag: "captured",
+            usedFallback: false,
+            success: true,
+            errorCode: nil,
+            latencyMs: 1
+        )
+    }
+}
+
+@MainActor
+func makeHybridPipeline(
+    streamingMode: StreamingMode = .off,
+    streamingTranscriber: TestStreamingTranscriber? = nil,
+    cursorReader: TestCursorReader? = nil,
+    cleaner: (any TextCleaning)? = nil,
+    onPartialTranscription: ((PartialTranscription) -> Void)? = nil
+) -> VoicePipeline {
+    let defaultCleaner: any TextCleaning = cleaner ?? TestCleaner(
+        result: CleanResult(
+            cleanText: "清洗后文本",
+            confidence: 0.9,
+            styleTag: "沟通风格",
+            usedFallback: false,
+            success: true,
+            errorCode: nil,
+            latencyMs: 5
+        )
+    )
+    let pipeline = VoicePipeline(
+        stateMachine: TestStateStore(),
+        audioCapture: TestAudioCapture(),
+        transcriber: TestTranscriber(),
+        contextResolver: TestContextResolver(),
+        cleaner: defaultCleaner,
+        injector: TestInjector(results: [
+            InjectResult(success: true, usedClipboardFallback: false, errorCode: nil, latencyMs: 5)
+        ]),
+        permissions: TestPermissions(),
+        logger: TestLogger(),
+        metrics: TestMetrics(),
+        streamingTranscriber: streamingTranscriber,
+        cursorReader: cursorReader,
+        streamingMode: streamingMode,
+        onPartialTranscription: onPartialTranscription
+    )
+    return pipeline
 }

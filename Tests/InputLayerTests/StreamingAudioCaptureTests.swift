@@ -1,6 +1,7 @@
 import Testing
 import AVFoundation
 
+@testable import VoxLiteDomain
 @testable import VoxLiteInput
 
 struct StreamingAudioCaptureTests {

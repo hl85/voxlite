@@ -72,6 +72,10 @@ struct CursorContextTests {
     @Test
     func testStreamingTranscribingProtocolMock() async {
         let transcriber = TestStreamingTranscriber()
+        transcriber.partialResults = [
+            PartialTranscription(text: "part-1", isFinal: false, confidence: 0.5),
+            PartialTranscription(text: "part-2", isFinal: true, confidence: 0.9)
+        ]
         let stream = transcriber.startStreaming()
 
         var iterator = stream.makeAsyncIterator()
@@ -93,30 +97,5 @@ private struct TestCursorContextReader: CursorContextReading {
 
     func readContext() async throws -> CursorContext? {
         context
-    }
-}
-
-private final class TestStreamingTranscriber: StreamingTranscribing, @unchecked Sendable {
-    private let stream: AsyncStream<PartialTranscription>
-    private let continuation: AsyncStream<PartialTranscription>.Continuation
-    private(set) var didStop = false
-
-    init() {
-        var storedContinuation: AsyncStream<PartialTranscription>.Continuation!
-        self.stream = AsyncStream { continuation in
-            storedContinuation = continuation
-        }
-        self.continuation = storedContinuation
-        continuation.yield(PartialTranscription(text: "part-1", isFinal: false, confidence: 0.5))
-        continuation.yield(PartialTranscription(text: "part-2", isFinal: true, confidence: 0.9))
-        continuation.finish()
-    }
-
-    func startStreaming() -> AsyncStream<PartialTranscription> {
-        stream
-    }
-
-    func stopStreaming() async {
-        didStop = true
     }
 }
