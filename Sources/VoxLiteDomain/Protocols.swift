@@ -1,18 +1,4 @@
-import AVFoundation
 import Foundation
-
-public struct AudioBufferPacket: @unchecked Sendable {
-    public let buffer: AVAudioPCMBuffer
-
-    public init(buffer: AVAudioPCMBuffer) {
-        self.buffer = buffer
-    }
-}
-
-public protocol StreamingAudioCapturing: Sendable {
-    func startStreaming() -> AsyncStream<AudioBufferPacket>
-    func stopStreaming()
-}
 
 public protocol StateStore: AnyObject {
     var current: VoxState { get }
@@ -31,16 +17,6 @@ public protocol SpeechTranscribing {
 
 public protocol ContextResolving {
     func resolveContext() -> ContextInfo
-}
-
-public protocol CursorContextReading: Sendable {
-    func readContext() async throws -> CursorContext?
-}
-
-public protocol StreamingTranscribing: Sendable {
-    func startStreaming() -> AsyncStream<PartialTranscription>
-    func stopStreaming() async
-    func appendBuffer(_ buffer: AVAudioPCMBuffer)
 }
 
 @MainActor

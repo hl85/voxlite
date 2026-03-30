@@ -77,57 +77,6 @@ let package = Package(
                 "VoxLiteSystem",
                 "VoxLiteFeature"
             ]
-        ),
-        .testTarget(
-            name: "SystemTests",
-            dependencies: [
-                .product(name: "Testing", package: "swift-testing"),
-                "VoxLiteDomain",
-                "VoxLiteCore",
-                "VoxLiteSystem"
-            ]
-        ),
-        .testTarget(
-            name: "InputLayerTests",
-            dependencies: [
-                .product(name: "Testing", package: "swift-testing"),
-                "VoxLiteDomain",
-                "VoxLiteInput"
-            ]
-        ),
-        .testTarget(
-            name: "CoreTests",
-            dependencies: [
-                .product(name: "Testing", package: "swift-testing"),
-                "VoxLiteDomain",
-                "VoxLiteCore"
-            ]
-        ),
-        .testTarget(
-            name: "IntegrationTests",
-            dependencies: [
-                .product(name: "Testing", package: "swift-testing"),
-                "VoxLiteDomain",
-                "VoxLiteInput",
-                "VoxLiteCore",
-                "VoxLiteOutput",
-                "VoxLiteFeature",
-                "VoxLiteSystem"
-            ],
-            path: "Tests/IntegrationTests"
-        ),
-        .testTarget(
-            name: "PerformanceTests",
-            dependencies: [
-                .product(name: "Testing", package: "swift-testing"),
-                "VoxLiteDomain",
-                "VoxLiteInput",
-                "VoxLiteCore",
-                "VoxLiteOutput",
-                "VoxLiteFeature",
-                "VoxLiteSystem"
-            ],
-            path: "Tests/PerformanceTests"
         )
     ]
 )

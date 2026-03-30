@@ -1,11 +1,9 @@
 import Foundation
-import Combine
 import VoxLiteCore
 import VoxLiteDomain
 import VoxLiteInput
 import VoxLiteOutput
 import VoxLiteSystem
-import SwiftUI
 
 public enum SpeechReadinessState: Equatable, Sendable {
     public enum FailureReason: Equatable, Sendable {
@@ -169,9 +167,6 @@ public final class AppViewModel: ObservableObject {
     @Published public var historyItems: [TranscriptHistoryItem] = []
     @Published public var skillSnapshot: SkillConfigSnapshot = FileSkillStore.defaultSnapshot
     @Published public var appSettings: AppSettings = FileAppSettingsStore.defaultSettings
-    @Published public var streamingMode: StreamingMode = .off
-    @Published public var partialText: String = ""
-    @Published public var isStreamingActive: Bool = false
     @Published public var menuBarSummary: String = ""
     @Published public var trialRunPassed: Bool = false
 
@@ -187,10 +182,8 @@ public final class AppViewModel: ObservableObject {
     private var foundationModelAvailabilityProvider: any FoundationModelAvailabilityProviding
     private let runtimeChainReloader: (() -> (pipeline: VoicePipeline, availabilityProvider: any FoundationModelAvailabilityProviding))?
     private let skillMatcher = SkillMatcher()
-    private var cancellables = Set<AnyCancellable>()
     private var monitor: HotKeyMonitor?
     private var activeSessionId: UUID?
-    @AppStorage("streamingMode") private var storedStreamingMode: String = StreamingMode.off.rawValue
 
     public init(
         pipeline: VoicePipeline,
@@ -215,7 +208,6 @@ public final class AppViewModel: ObservableObject {
         self.permissionSnapshot = permissions.currentPermissionSnapshot()
         let settings = self.settingsStore.loadSettings()
         self.appSettings = settings
-        self.streamingMode = StreamingMode(rawValue: storedStreamingMode) ?? .off
         let onboardingDone = settings.onboardingCompleted && permissionSnapshot.allGranted
         self.showOnboarding = !onboardingDone
         self.onboardingStep = onboardingDone ? 5 : (permissionSnapshot.allGranted ? 4 : 1)
@@ -228,15 +220,6 @@ public final class AppViewModel: ObservableObject {
         refreshFoundationModelAvailability()
         refreshModelNames()
         configureMonitor()
-        $streamingMode
-            .dropFirst()
-            .sink { [weak self] mode in
-                guard let self else { return }
-                self.storedStreamingMode = mode.rawValue
-                // 流式模式变化需要重建 pipeline，使新的流式组件生效
-                self.saveRemoteModelSettings()
-            }
-            .store(in: &cancellables)
     }
 
     public func resetResources() async {
@@ -538,7 +521,7 @@ public final class AppViewModel: ObservableObject {
         permissionSnapshot = permissions.currentPermissionSnapshot()
         refreshFoundationModelAvailability()
         applySpeechReadiness(.notReady)
-        guard permissionSnapshot.microphoneGranted && permissionSnapshot.speechRecognitionGranted else {
+        guard permissionSnapshot.allGranted else {
             stateText = "Failed"
             setProcessingFeedback(.idle)
             showOnboarding = true
@@ -560,12 +543,6 @@ public final class AppViewModel: ObservableObject {
             recommendedSettingItem = nil
             canRetry = false
             showRecordingAnimation = true
-            if streamingMode != .off {
-                isStreamingActive = true
-                pipeline.onPartialTranscription = { [weak self] partial in
-                    self?.partialText = partial.text
-                }
-            }
         } catch {
             if let voxError = error as? VoxErrorCode, voxError == .recordingUnavailable {
                 stateText = "Idle"
@@ -597,8 +574,6 @@ public final class AppViewModel: ObservableObject {
             let result = try await pipeline.stopRecordingAndProcess(sessionId: activeSessionId)
             stateText = result.inject.success ? "Done" : "Failed"
             cleanedText = result.clean.cleanText
-            partialText = ""
-            isStreamingActive = false
             trialRunPassed = result.inject.success
             cleanStyleTag = result.clean.styleTag
             setProcessingFeedback(result.inject.success ? .completed : .failed)
@@ -628,8 +603,6 @@ public final class AppViewModel: ObservableObject {
                 lastError = "按住快捷键稍久一点再说话"
                 actionTitle = ""
                 canRetry = false
-                partialText = ""
-                isStreamingActive = false
                 applySpeechReadiness(.terminated(.recordingTooShort))
                 setProcessingFeedback(.failed, text: "录音过短，已终止")
                 refreshFoundationModelAvailability()
@@ -638,8 +611,6 @@ public final class AppViewModel: ObservableObject {
                 return
             }
             stateText = "Failed"
-            partialText = ""
-            isStreamingActive = false
             if let voxError = error as? VoxErrorCode, voxError == .timeout {
                 lastError = "处理超时，请重试"
                 setProcessingFeedback(.failed, text: "处理超时")
@@ -941,15 +912,6 @@ public enum VoxLiteFeatureBootstrap {
         let clipboardInjector = ClipboardTextInjector(logger: logger)
         let injector = InjectionStrategyChain(strategies: [clipboardInjector])
         let retryPolicy = (usesRemoteSTT || usesRemoteLLM) ? RetryPolicy.remoteModelDefault : .m2Default
-
-        // 从 UserDefaults 读取流式模式配置
-        let storedMode = StreamingMode(rawValue: UserDefaults.standard.string(forKey: "streamingMode") ?? "") ?? .off
-
-        // 仅在非 off 模式下实例化流式组件，避免不必要的资源占用
-        let liveTranscriber: LiveSpeechTranscriber? = storedMode != .off ? LiveSpeechTranscriber() : nil
-        let streamingAudioCapture: StreamingAudioCaptureService? = storedMode != .off ? StreamingAudioCaptureService() : nil
-        let cursorContextReader: AXCursorContextReader? = storedMode != .off ? AXCursorContextReader() : nil
-
         let pipeline = VoicePipeline(
             stateMachine: stateMachine,
             audioCapture: audio,
@@ -960,11 +922,7 @@ public enum VoxLiteFeatureBootstrap {
             permissions: permissions,
             logger: logger,
             metrics: metrics,
-            retryPolicy: retryPolicy,
-            streamingTranscriber: liveTranscriber,
-            streamingAudio: streamingAudioCapture,
-            cursorReader: cursorContextReader,
-            streamingMode: storedMode
+            retryPolicy: retryPolicy
         )
         return (pipeline, cleaner)
     }

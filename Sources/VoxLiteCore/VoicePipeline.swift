@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import VoxLiteDomain
 
 @MainActor
@@ -52,16 +51,6 @@ public final class VoicePipeline {
     private let metrics: MetricsServing
     private let retryPolicy: RetryPolicy
 
-    private let streamingTranscriber: (any StreamingTranscribing)?
-    private let streamingAudio: (any StreamingAudioCapturing)?
-    private let cursorReader: (any CursorContextReading)?
-    public let streamingMode: StreamingMode
-    public var onPartialTranscription: ((PartialTranscription) -> Void)?
-
-    private var lockedCursorContext: CursorContext?
-    private var lockedFrontmostPID: pid_t?
-    private var streamingTask: Task<Void, Never>?
-
     public var stageObserver: StageObserver?
 
     public init(
@@ -74,12 +63,7 @@ public final class VoicePipeline {
         permissions: PermissionManaging,
         logger: LoggerServing,
         metrics: MetricsServing,
-        retryPolicy: RetryPolicy = .m2Default,
-        streamingTranscriber: (any StreamingTranscribing)? = nil,
-        streamingAudio: (any StreamingAudioCapturing)? = nil,
-        cursorReader: (any CursorContextReading)? = nil,
-        streamingMode: StreamingMode = .off,
-        onPartialTranscription: ((PartialTranscription) -> Void)? = nil
+        retryPolicy: RetryPolicy = .m2Default
     ) {
         self.stateMachine = stateMachine
         self.audioCapture = audioCapture
@@ -91,21 +75,19 @@ public final class VoicePipeline {
         self.logger = logger
         self.metrics = metrics
         self.retryPolicy = retryPolicy
-        self.streamingTranscriber = streamingTranscriber
-        self.streamingAudio = streamingAudio
-        self.cursorReader = cursorReader
-        self.streamingMode = streamingMode
-        self.onPartialTranscription = onPartialTranscription
     }
 
     public func startRecording() throws -> UUID {
         logger.info("pipeline startRecording begin")
         let snapshot = permissions.currentPermissionSnapshot()
-        guard snapshot.microphoneGranted && snapshot.speechRecognitionGranted else {
+        guard snapshot.allGranted else {
             logger.warn("pipeline startRecording denied permissions mic=\(snapshot.microphoneGranted) speech=\(snapshot.speechRecognitionGranted) ax=\(snapshot.accessibilityGranted)")
             _ = stateMachine.transition(to: .failed)
             if !snapshot.microphoneGranted {
                 throw VoxErrorCode.permissionMicrophoneDenied
+            }
+            if !snapshot.accessibilityGranted {
+                throw VoxErrorCode.permissionAccessibilityDenied
             }
             if !snapshot.speechRecognitionGranted {
                 throw VoxErrorCode.permissionSpeechDenied
@@ -118,11 +100,7 @@ public final class VoicePipeline {
         }
         do {
             let id = try audioCapture.startRecording()
-            lockedFrontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
             logger.info("pipeline startRecording success session=\(id.uuidString)")
-            if streamingMode != .off {
-                streamingTask = Task { await self.startStreamingPhase() }
-            }
             return id
         } catch let error as VoxErrorCode {
             logger.error("pipeline startRecording failed error=\(error.rawValue)")
@@ -143,13 +121,6 @@ public final class VoicePipeline {
         guard stateMachine.transition(to: .processing) else {
             logger.warn("pipeline process state transition rejected from current state")
             throw VoxErrorCode.unknown
-        }
-
-        if streamingMode != .off {
-            await streamingTranscriber?.stopStreaming()
-            streamingAudio?.stopStreaming()
-            await streamingTask?.value
-            streamingTask = nil
         }
 
         let audioStopStart = Date()
@@ -180,8 +151,7 @@ public final class VoicePipeline {
 
         publishStage(.init(stage: .transcribe, phase: .started))
         logger.debug("pipeline stage transcribe begin")
-        // .previewOnly 不将光标上下文注入 Whisper 提示词，仅 .full 模式才注入
-        let parsedAudio = try parseAudioPayload(audio, cursorContext: streamingMode == .full ? lockedCursorContext : nil)
+        let parsedAudio = try parseAudioPayload(audio)
         defer { try? FileManager.default.removeItem(at: parsedAudio.url) }
         let transcription: SpeechTranscription
         do {
@@ -216,10 +186,8 @@ public final class VoicePipeline {
             throw VoxErrorCode.timeout
         }
 
-        let enrichedContext = buildEnrichedContext(base: context, cursorContext: parsedAudio.cursorContext)
-
         publishStage(.init(stage: .clean, phase: .started))
-        var clean = await cleaner.cleanText(transcript: transcript.text, context: enrichedContext)
+        var clean = await cleaner.cleanText(transcript: transcript.text, context: context)
         logger.info("pipeline stage clean done success=\(clean.success) latency=\(clean.latencyMs)ms usedFallback=\(clean.usedFallback)")
         publishStage(.init(stage: .clean, phase: .completed, success: clean.success, errorCode: clean.errorCode, latencyMs: clean.latencyMs))
         metrics.record(event: Stage.clean.metricEvent, success: clean.success, errorCode: clean.errorCode, latencyMs: clean.latencyMs)
@@ -240,17 +208,6 @@ public final class VoicePipeline {
         let inject = try await executeWithRetry(maxRetry: retryPolicy.maxRetries) {
             guard Int(Date().timeIntervalSince(processStart) * 1000) <= retryPolicy.timeoutMs else {
                 throw VoxErrorCode.timeout
-            }
-            // 注入前校验前台焦点，若焦点漂移则尝试恢复到录音时的目标应用
-            if let lockedPID = lockedFrontmostPID {
-                let currentPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                if currentPID != lockedPID {
-                    if let originalApp = NSRunningApplication(processIdentifier: lockedPID) {
-                        originalApp.activate()
-                        try? await Task.sleep(for: .milliseconds(150))
-                    }
-                    logger.warn("pipeline focus drifted from pid=\(lockedPID) to pid=\(currentPID ?? -1), attempted restore")
-                }
             }
             if stateMachine.current != .injecting {
                 guard stateMachine.transition(to: .injecting) else {
@@ -280,7 +237,7 @@ public final class VoicePipeline {
         return ProcessResult(
             sessionId: sessionId,
             transcript: transcript,
-            context: enrichedContext,
+            context: context,
             clean: clean,
             inject: inject,
             totalLatencyMs: total
@@ -291,7 +248,6 @@ public final class VoicePipeline {
         if stateMachine.current == .done || stateMachine.current == .failed {
             _ = stateMachine.transition(to: .idle)
         }
-        lockedFrontmostPID = nil
     }
 
     public func resetResources() async {
@@ -320,65 +276,6 @@ public final class VoicePipeline {
 
     public func percentileLatency(for stage: Stage, value: Double) -> Int? {
         metrics.percentile(stage.metricEvent, value)
-    }
-
-    private func startStreamingPhase() async {
-        guard streamingMode != .off else { return }
-        // 仅 .full 模式需要读取光标上下文，.previewOnly 仅做实时预览不注入上下文
-        if streamingMode == .full, let reader = cursorReader {
-            do {
-                lockedCursorContext = try await reader.readContext()
-                logger.info("pipeline cursor context locked surroundingLen=\(lockedCursorContext?.surroundingText.count ?? 0)")
-            } catch {
-                logger.warn("pipeline cursor context read failed error=\(error), continuing without cursor context")
-            }
-        }
-        await runStreamingPreview()
-    }
-
-    private func runStreamingPreview() async {
-        guard streamingMode != .off else { return }
-        guard let streamingTranscriber else { return }
-
-        let transcriptionStream = streamingTranscriber.startStreaming()
-
-        await withTaskGroup(of: Void.self) { group in
-            if let streamingAudio {
-                let bufferStream = streamingAudio.startStreaming()
-                group.addTask {
-                    for await packet in bufferStream {
-                        streamingTranscriber.appendBuffer(packet.buffer)
-                    }
-                }
-            }
-
-            group.addTask { [weak self] in
-                guard let self else { return }
-                for await partial in transcriptionStream {
-                    await MainActor.run {
-                        self.onPartialTranscription?(partial)
-                    }
-                }
-            }
-        }
-    }
-
-    private func buildEnrichedContext(base: ContextInfo, cursorContext: CursorContext?) -> ContextInfo {
-        guard let cursorContext else { return base }
-        let updatedEnrich = ContextEnrichment(
-            appName: base.enrich?.appName,
-            isEditable: base.enrich?.isEditable,
-            focusedRole: base.enrich?.focusedRole,
-            vocabularyBias: base.enrich?.vocabularyBias ?? [:],
-            cursorContext: cursorContext
-        )
-        return ContextInfo(
-            bundleId: base.bundleId,
-            appCategory: base.appCategory,
-            inputRole: base.inputRole,
-            locale: base.locale,
-            enrich: updatedEnrich
-        )
     }
 
     private func executeWithRetry<T>(maxRetry: Int, operation: () async throws -> T) async throws -> T {
@@ -413,7 +310,7 @@ public final class VoicePipeline {
         throw VoxErrorCode.retryExhausted
     }
 
-    private func parseAudioPayload(_ audio: Data, cursorContext: CursorContext? = nil) throws -> (url: URL, elapsedMs: Int, cursorContext: CursorContext?) {
+    private func parseAudioPayload(_ audio: Data) throws -> (url: URL, elapsedMs: Int) {
         guard let payload = String(data: audio, encoding: .utf8) else {
             throw VoxErrorCode.transcriptionUnavailable
         }
@@ -430,7 +327,7 @@ public final class VoicePipeline {
             throw VoxErrorCode.transcriptionUnavailable
         }
         let elapsedMs = Int(parts[1]) ?? 0
-        return (URL(fileURLWithPath: path), elapsedMs, cursorContext)
+        return (URL(fileURLWithPath: path), elapsedMs)
     }
 
     private func mapTranscriptionError(_ error: SpeechTranscriptionError) -> VoxErrorCode {

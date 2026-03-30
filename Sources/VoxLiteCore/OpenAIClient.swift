@@ -135,8 +135,7 @@ public final class OpenAIClient: Sendable {
     
     public func transcribeAudio(
         model: String,
-        audioFileURL: URL,
-        prompt: String? = nil
+        audioFileURL: URL
     ) async throws -> TranscriptionResult {
         let startTime = CFAbsoluteTimeGetCurrent()
         
@@ -188,17 +187,6 @@ public final class OpenAIClient: Sendable {
         body.append(audioData)
         body.append(newline)
         
-        if let prompt, prompt.isEmpty == false {
-            guard let promptField = "--\(boundary)\r\n".data(using: .utf8),
-                  let promptDisposition = "Content-Disposition: form-data; name=\"prompt\"\r\n\r\n".data(using: .utf8),
-                  let promptValue = "\(prompt)\r\n".data(using: .utf8) else {
-                throw OpenAIClientError.encodingError
-            }
-            body.append(promptField)
-            body.append(promptDisposition)
-            body.append(promptValue)
-        }
-
         // Close boundary
         guard let closeBoundary = "--\(boundary)--\r\n".data(using: .utf8) else {
             throw OpenAIClientError.encodingError
@@ -319,15 +307,6 @@ public final class OpenAIClient: Sendable {
         logger?.info("openai_client endpoint=\(endpoint) status=\(statusCode) latency=\(latencyMs)ms")
     }
 }
-
-// MARK: - AudioTranscriptionClient Protocol
-
-@MainActor
-public protocol AudioTranscriptionClient: Sendable {
-    func transcribeAudio(model: String, audioFileURL: URL, prompt: String?) async throws -> TranscriptionResult
-}
-
-extension OpenAIClient: AudioTranscriptionClient {}
 
 // MARK: - Data Extensions for Multipart Form
 
