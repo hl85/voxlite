@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import VoxLiteDomain
 
@@ -50,6 +51,8 @@ public final class VoicePipeline {
     private let logger: LoggerServing
     private let metrics: MetricsServing
     private let retryPolicy: RetryPolicy
+    /// 录音开始时锁定的前台应用 PID，用于注入前恢复焦点
+    private var lockedFrontmostPID: pid_t?
 
     public var stageObserver: StageObserver?
 
@@ -100,6 +103,7 @@ public final class VoicePipeline {
         }
         do {
             let id = try audioCapture.startRecording()
+            lockedFrontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
             logger.info("pipeline startRecording success session=\(id.uuidString)")
             return id
         } catch let error as VoxErrorCode {
@@ -209,6 +213,16 @@ public final class VoicePipeline {
             guard Int(Date().timeIntervalSince(processStart) * 1000) <= retryPolicy.timeoutMs else {
                 throw VoxErrorCode.timeout
             }
+            if let lockedPID = lockedFrontmostPID {
+                let currentPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                if currentPID != lockedPID {
+                    if let originalApp = NSRunningApplication(processIdentifier: lockedPID) {
+                        originalApp.activate()
+                        try? await Task.sleep(for: .milliseconds(150))
+                    }
+                    logger.warn("pipeline focus drifted from pid=\(lockedPID) to pid=\(currentPID ?? -1), attempted restore")
+                }
+            }
             if stateMachine.current != .injecting {
                 guard stateMachine.transition(to: .injecting) else {
                     logger.warn("pipeline stage inject state transition rejected")
@@ -247,6 +261,7 @@ public final class VoicePipeline {
     public func resetToIdle() {
         if stateMachine.current == .done || stateMachine.current == .failed {
             _ = stateMachine.transition(to: .idle)
+            lockedFrontmostPID = nil
         }
     }
 

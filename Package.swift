@@ -77,6 +77,14 @@ let package = Package(
                 "VoxLiteSystem",
                 "VoxLiteFeature"
             ]
+        ),
+        .testTarget(
+            name: "SystemTests",
+            dependencies: [
+                .product(name: "Testing", package: "swift-testing"),
+                "VoxLiteDomain",
+                "VoxLiteSystem"
+            ]
         )
     ]
 )

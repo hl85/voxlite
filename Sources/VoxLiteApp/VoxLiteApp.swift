@@ -3,6 +3,7 @@ import Carbon
 import SwiftUI
 import VoxLiteDomain
 import VoxLiteFeature
+import VoxLiteSystem
 internal import Combine
 
 // MARK: - AppDelegate
@@ -48,6 +49,10 @@ struct VoxLiteApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = VoxLiteApp.makeViewModel()
     @Environment(\.openWindow) private var openWindow
+
+    init() {
+        PermissionManager().requestAccessibilityPermission()
+    }
 
     var body: some Scene {
         // 主窗口 —— 引导 + 运行态全部在这里
